@@ -1,0 +1,91 @@
+.tech-link {
+  color: #387ed1;
+  text-decoration: none;
+  font-weight: 500;
+  transition: color 0.3s ease;
+}
+
+.tech-link:hover {
+  color: #387ed1;
+  text-decoration: underline;
+}
+
+.universe-logo-wrapper {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 60px; /* Gives a visually equal baseline for centering logos vertically */
+  margin-bottom: 1.5rem;
+}
+
+.universe-logo {
+  object-fit: contain;
+  transition: transform 0.3s ease;
+  cursor: pointer;
+}
+
+.universe-logo:hover {
+  transform: scale(1.05);
+}
+
+/* Suggested widths for each partner logo */
+.logo-fundhouse {
+  width: 60%;
+}
+
+.logo-sensibull {
+  width: 58%;
+}
+
+.logo-goldenpi {
+  width: 55%;
+}
+
+.logo-streak {
+  width: 60%;
+}
+
+.logo-smallcase {
+  width: 58%;
+}
+
+.logo-ditto {
+  width: 50%;
+}
+
+/* Typography styles for descriptions */
+.universe-desc {
+  font-size: 15px !important;
+  line-height: 1.6 !important;
+  max-width: 75%;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.universe-card-desc {
+  font-size: 15px !important;
+  line-height: 1.6 !important;
+  margin-left: auto;
+  margin-right: auto;
+  max-width: 75%; /* Centered and wrapped properly within each card */
+}
+
+/* Premium Signup Button */
+.signup-btn {
+  background-color: #387ed1 !important;
+  border: 1px solid #387ed1 !important;
+  color: #fff !important;
+  padding: 12px 36px !important;
+  font-weight: 500;
+  border-radius: 3px !important;
+  transition: all 0.3s ease !important;
+  display: inline-block;
+}
+
+.signup-btn:hover {
+  background-color: #2c65a9 !important;
+  border-color: #2c65a9 !important;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(56, 126, 209, 0.25);
+  color: #fff !important;
+}
