@@ -1,0 +1,63 @@
+# ==========================================
+# DEPENDENCIES & PACKAGE MANAGERS
+# ==========================================
+node_modules/
+*/node_modules/
+.pnp
+.pnp.js
+
+# ==========================================
+# PRODUCTION BUILDS & COMPILATION ARTIFACTS
+# ==========================================
+dist/
+*/dist/
+build/
+*/build/
+
+# ==========================================
+# ENVIRONMENT VARIABLES & CREDENTIALS
+# ==========================================
+# Block all actual environment files across root and sub-applications
+.env
+.env.*
+*.local
+*/.env
+*/.env.*
+*/.env.local
+*/.env.development.local
+*/.env.test.local
+*/.env.production.local
+
+# Explicitly permit template files
+!.env.example
+!*/.env.example
+
+# ==========================================
+# TESTING & COVERAGE
+# ==========================================
+coverage/
+*/coverage/
+
+# ==========================================
+# LOGS & CACHE
+# ==========================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.turbo/
+.cache/
+*.bak
+
+# ==========================================
+# OPERATING SYSTEM & EDITOR FILES
+# ==========================================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ==========================================
+# LOCAL AGENT SCRATCH & BACKUP DIRECTORIES
+# ==========================================
+scratch/
