@@ -7,9 +7,9 @@
     "dev": "tsx watch index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test:unit": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/modules/auth/jwt.service.test.ts src/modules/auth/csrf-cookie.test.ts",
+    "test:unit": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/modules/auth/jwt.service.test.ts src/modules/auth/csrf-cookie.test.ts src/modules/watchlist/watchlist.service.test.ts",
     "test:integration": "tsx --test src/test/integration/**/*.integration.test.ts",
-    "test:all": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/modules/auth/jwt.service.test.ts src/modules/auth/csrf-cookie.test.ts src/test/integration/**/*.integration.test.ts",
+    "test:all": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/modules/auth/jwt.service.test.ts src/modules/auth/csrf-cookie.test.ts src/modules/watchlist/watchlist.service.test.ts src/test/integration/**/*.integration.test.ts",
     "test": "npm run test:all"
   },
   "author": "",

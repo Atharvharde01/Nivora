@@ -11,6 +11,10 @@ import { OtpService } from "./src/modules/auth/otp.service";
 import { JwtService } from "./src/modules/auth/jwt.service";
 import { AuthService } from "./src/modules/auth/auth.service";
 import { AuthController } from "./src/modules/auth/auth.controller";
+import { InstrumentQuoteService } from "./src/modules/instruments/instrument-quote.service";
+import { InstrumentController } from "./src/modules/instruments/instrument.controller";
+import { WatchlistService } from "./src/modules/watchlist/watchlist.service";
+import { WatchlistController } from "./src/modules/watchlist/watchlist.controller";
 import { createAppRouter } from "./src/routes";
 
 // ==========================================
@@ -57,8 +61,22 @@ const authController = new AuthController({
   allowedOrigins: config.allowedOrigins,
 });
 
+const instrumentQuoteService = new InstrumentQuoteService();
+const instrumentController = new InstrumentController({
+  quoteService: instrumentQuoteService,
+});
+
+const watchlistService = new WatchlistService({
+  quoteService: instrumentQuoteService,
+});
+const watchlistController = new WatchlistController({
+  watchlistService,
+});
+
 const appRouter = createAppRouter({
   authDependencies: { authController, jwtService },
+  instrumentController,
+  watchlistController,
 });
 
 const app = createApp({
