@@ -6,10 +6,6 @@ import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 
-import { HoldingsModel } from "./model/HoldingsModel";
-import { PositionsModel } from "./model/PositionsModel";
-import { OrdersModel } from "./model/OrdersModel";
-
 // ==========================================
 // 1. ENVIRONMENT & CONFIGURATION VALIDATION
 // ==========================================
@@ -561,97 +557,29 @@ app.get(
 //   res.send("Done!");
 // });
 
-app.get(
-  "/allHoldings",
-  asyncHandler(async (_req: Request, res: Response) => {
-    const allHoldings = await HoldingsModel.find({});
-    res.json(allHoldings);
-  })
-);
+const LEGACY_ENDPOINT_RETIRED_RESPONSE = {
+  success: false,
+  error: {
+    code: "LEGACY_ENDPOINT_RETIRED",
+    message: "This endpoint is no longer available.",
+  },
+} as const;
 
-app.get(
-  "/allPositions",
-  asyncHandler(async (_req: Request, res: Response) => {
-    const allPositions = await PositionsModel.find({});
-    res.json(allPositions);
-  })
-);
+app.get("/allHoldings", (_req: Request, res: Response) => {
+  res.status(410).json(LEGACY_ENDPOINT_RETIRED_RESPONSE);
+});
 
-app.get(
-  "/allOrders",
-  asyncHandler(async (_req: Request, res: Response) => {
-    const allOrders = await OrdersModel.find({});
-    res.json(allOrders);
-  })
-);
+app.get("/allPositions", (_req: Request, res: Response) => {
+  res.status(410).json(LEGACY_ENDPOINT_RETIRED_RESPONSE);
+});
 
-interface NewOrderRequestBody {
-  name: string;
-  qty: number | string;
-  price: number | string;
-  mode: string;
-}
+app.get("/allOrders", (_req: Request, res: Response) => {
+  res.status(410).json(LEGACY_ENDPOINT_RETIRED_RESPONSE);
+});
 
-app.post(
-  "/newOrder",
-  asyncHandler(async (req: Request<{}, {}, NewOrderRequestBody>, res: Response) => {
-    const { name, qty, price, mode } = req.body;
-
-    // Validate name
-    if (!name || typeof name !== "string" || !name.trim()) {
-      return res.status(400).json({
-        status: 400,
-        error: "Validation error: 'name' must be a non-empty string",
-      });
-    }
-
-    // Validate qty (must be positive number)
-    const numericQty = typeof qty === "number" ? qty : parseFloat(String(qty));
-    if (isNaN(numericQty) || numericQty <= 0) {
-      return res.status(400).json({
-        status: 400,
-        error: "Validation error: 'qty' must be a positive number",
-      });
-    }
-
-    // Validate price (must be positive or non-negative number)
-    const numericPrice = typeof price === "number" ? price : parseFloat(String(price));
-    if (isNaN(numericPrice) || numericPrice < 0) {
-      return res.status(400).json({
-        status: 400,
-        error: "Validation error: 'price' must be a valid non-negative number",
-      });
-    }
-
-    // Validate mode (case-insensitive BUY or SELL)
-    if (!mode || typeof mode !== "string") {
-      return res.status(400).json({
-        status: 400,
-        error: "Validation error: 'mode' is required",
-      });
-    }
-    const normalizedMode = mode.trim().toUpperCase();
-    if (normalizedMode !== "BUY" && normalizedMode !== "SELL") {
-      return res.status(400).json({
-        status: 400,
-        error: "Validation error: 'mode' must be either 'BUY' or 'SELL'",
-      });
-    }
-
-    const newOrder = new OrdersModel({
-      name: name.trim(),
-      qty: numericQty,
-      price: numericPrice,
-      mode: normalizedMode,
-    });
-
-    // Await persistence before responding
-    await newOrder.save();
-
-    // Preserve exact existing response contract
-    res.status(201).send("Order saved!");
-  })
-);
+app.post("/newOrder", (_req: Request, res: Response) => {
+  res.status(410).json(LEGACY_ENDPOINT_RETIRED_RESPONSE);
+});
 
 // ==========================================
 // 5. 404 NOT FOUND & ERROR HANDLING
