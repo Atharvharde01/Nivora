@@ -104,6 +104,46 @@ describe("Task 24 — CSRF & Secure Cookie Helpers (Unit)", () => {
         }
       );
     });
+
+    it("generates and validates a session-bound HMAC CSRF token", () => {
+      const sessionId = "session_12345";
+      const secret = "secret_key_minimum_32_characters";
+      const boundToken = generateCsrfToken(sessionId, secret);
+
+      assert.ok(boundToken.includes("."));
+      const [salt, hmac] = boundToken.split(".");
+      assert.equal(salt.length, 32);
+      assert.equal(hmac.length, 64);
+
+      const req = {
+        cookies: { [CSRF_COOKIE_NAME]: boundToken },
+        headers: { [CSRF_HEADER_NAME]: boundToken },
+      } as unknown as Request;
+
+      assert.doesNotThrow(() => validateCsrfProtection(req, sessionId, secret));
+    });
+
+    it("rejects session-bound CSRF token when presented for a different session", () => {
+      const sessionIdA = "session_alice";
+      const sessionIdB = "session_bob";
+      const secret = "secret_key_minimum_32_characters";
+      const aliceToken = generateCsrfToken(sessionIdA, secret);
+
+      const req = {
+        cookies: { [CSRF_COOKIE_NAME]: aliceToken },
+        headers: { [CSRF_HEADER_NAME]: aliceToken },
+      } as unknown as Request;
+
+      assert.throws(
+        () => validateCsrfProtection(req, sessionIdB, secret),
+        (err: unknown) => {
+          assert.ok(err instanceof AuthError);
+          assert.equal(err.code, "CSRF_TOKEN_MISMATCH");
+          assert.equal(err.statusCode, 403);
+          return true;
+        }
+      );
+    });
   });
 
   describe("B. Request Origin Enforcement", () => {
