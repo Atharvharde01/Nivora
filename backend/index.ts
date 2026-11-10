@@ -21,6 +21,7 @@ import { OrderController } from "./src/modules/orders/order.controller";
 import { PortfolioService } from "./src/modules/portfolio/portfolio.service";
 import { PortfolioController } from "./src/modules/portfolio/portfolio.controller";
 import { TradeController } from "./src/modules/trades/trade.controller";
+import { AccountController } from "./src/modules/practice-accounts/account.controller";
 import { createAppRouter } from "./src/routes";
 
 // ==========================================
@@ -96,6 +97,9 @@ const portfolioController = new PortfolioController({
   portfolioService,
 });
 const tradeController = new TradeController();
+const accountController = new AccountController({
+  practiceAccountService,
+});
 
 const appRouter = createAppRouter({
   authDependencies: { authController, jwtService },
@@ -104,6 +108,7 @@ const appRouter = createAppRouter({
   orderController,
   portfolioController,
   tradeController,
+  accountController,
 });
 
 const app = createApp({
