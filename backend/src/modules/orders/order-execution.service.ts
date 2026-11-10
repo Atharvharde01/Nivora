@@ -1,4 +1,5 @@
 import { ClientSession, Types } from "mongoose";
+import { MongoServerError } from "mongodb";
 import {
   calculateHoldingAfterBuy,
   calculateHoldingAfterSell,
@@ -151,12 +152,61 @@ function isDuplicateKeyError(err: unknown): boolean {
   return record.code === 11000 || record.codeName === "DuplicateKey";
 }
 
-function isWriteConflictError(err: unknown): boolean {
+function isOrderIdempotencyDuplicateKeyError(err: unknown): boolean {
+  if (!isDuplicateKeyError(err)) {
+    return false;
+  }
+  const record = err as Record<string, unknown>;
+  const keyPattern = record.keyPattern as Record<string, unknown> | undefined;
+  if (
+    keyPattern &&
+    (keyPattern.idempotencyKey !== undefined ||
+      keyPattern["idempotencyKey"] !== undefined)
+  ) {
+    return true;
+  }
+
+  const message = typeof record.message === "string" ? record.message : "";
+  return (
+    message.includes("idempotencyKey") ||
+    message.includes("orders_practice_account_idempotency_unique_idx")
+  );
+}
+
+function isTransientTransactionOrWriteConflict(err: unknown): boolean {
   if (typeof err !== "object" || err === null) {
     return false;
   }
   const record = err as Record<string, unknown>;
-  return record.code === 112 || record.codeName === "WriteConflict";
+  if (record.code === 112 || record.codeName === "WriteConflict") {
+    return true;
+  }
+  if (
+    typeof (record as { hasErrorLabel?: (l: string) => boolean })
+      .hasErrorLabel === "function"
+  ) {
+    return (
+      record as { hasErrorLabel: (l: string) => boolean }
+    ).hasErrorLabel("TransientTransactionError");
+  }
+  const labels = record.errorLabels;
+  if (Array.isArray(labels) && labels.includes("TransientTransactionError")) {
+    return true;
+  }
+  if (labels instanceof Set && labels.has("TransientTransactionError")) {
+    return true;
+  }
+  return false;
+}
+
+function createTransientVersionConflictError(
+  message: string
+): MongoServerError {
+  const err = new MongoServerError({ message });
+  err.code = 112;
+  err.codeName = "WriteConflict";
+  err.addErrorLabel("TransientTransactionError");
+  return err;
 }
 
 /**
@@ -633,31 +683,46 @@ export class OrderExecutionService {
           err.message
         );
       }
-      if (isDuplicateKeyError(err)) {
-        const committedOrder =
-          await this.repository.findOrderByAccountAndIdempotencyKey(
-            validated.practiceAccountId,
-            validated.idempotencyKey
+      if (isOrderIdempotencyDuplicateKeyError(err)) {
+        const maxAttempts = 6;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          const committedOrder =
+            await this.repository.findOrderByAccountAndIdempotencyKey(
+              validated.practiceAccountId,
+              validated.idempotencyKey
+            );
+          const currentAccount = await this.repository.findPracticeAccountById(
+            validated.practiceAccountId
           );
-        const currentAccount = await this.repository.findPracticeAccountById(
-          validated.practiceAccountId
-        );
-        if (committedOrder && currentAccount) {
-          return await this.resolveIdempotentReplay(
-            committedOrder,
-            validated,
-            currentAccount,
-            options,
-            now,
-            undefined
-          );
+
+          if (committedOrder && currentAccount) {
+            return await this.resolveIdempotentReplay(
+              committedOrder,
+              validated,
+              currentAccount,
+              options,
+              now,
+              undefined
+            );
+          }
+
+          if (attempt < maxAttempts) {
+            await new Promise((resolve) => setTimeout(resolve, attempt * 35));
+          }
         }
+
         throw new OrderExecutionError(
           "CONCURRENCY_CONFLICT",
-          "Duplicate order execution conflict detected."
+          "Duplicate order execution conflict could not be resolved within the retry window."
         );
       }
-      if (isWriteConflictError(err)) {
+      if (isDuplicateKeyError(err)) {
+        throw new OrderExecutionError(
+          "CONCURRENCY_CONFLICT",
+          "Duplicate key conflict detected during order execution."
+        );
+      }
+      if (isTransientTransactionOrWriteConflict(err)) {
         throw new OrderExecutionError(
           "CONCURRENCY_CONFLICT",
           "Transient transaction write conflict detected."
@@ -844,8 +909,7 @@ export class OrderExecutionService {
       !updatedAccount ||
       updatedAccount.cashBalancePaise !== expectedBalanceAfterPaise
     ) {
-      throw new OrderExecutionError(
-        "CONCURRENCY_CONFLICT",
+      throw createTransientVersionConflictError(
         "Concurrent balance modification detected during BUY execution."
       );
     }
@@ -889,8 +953,7 @@ export class OrderExecutionService {
     );
 
     if (!updatedHolding) {
-      throw new OrderExecutionError(
-        "CONCURRENCY_CONFLICT",
+      throw createTransientVersionConflictError(
         "Concurrent holding modification detected during BUY execution."
       );
     }
@@ -1053,8 +1116,7 @@ export class OrderExecutionService {
     );
 
     if (!updatedHolding) {
-      throw new OrderExecutionError(
-        "CONCURRENCY_CONFLICT",
+      throw createTransientVersionConflictError(
         "Concurrent holding modification detected during SELL execution."
       );
     }
@@ -1073,8 +1135,7 @@ export class OrderExecutionService {
       !updatedAccount ||
       updatedAccount.cashBalancePaise !== expectedBalanceAfterPaise
     ) {
-      throw new OrderExecutionError(
-        "CONCURRENCY_CONFLICT",
+      throw createTransientVersionConflictError(
         "Concurrent balance modification detected during SELL execution."
       );
     }
@@ -1183,7 +1244,8 @@ export class OrderExecutionService {
       existingOrder.instrumentId.toString() ===
         validated.instrumentId.toString() &&
       existingOrder.side === validated.side &&
-      existingOrder.quantity === validated.quantity;
+      existingOrder.quantity === validated.quantity &&
+      existingOrder.orderType === "MARKET";
 
     if (!isSameIntent) {
       throw new OrderExecutionError(

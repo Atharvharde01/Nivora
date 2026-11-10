@@ -125,22 +125,16 @@ export async function executeMongoTransaction<T>(
   }
 
   try {
-    session.startTransaction({
-      readConcern: { level: "snapshot" },
-      writeConcern: { w: "majority" },
-    });
-
-    const result = await work(session);
-    await session.commitTransaction();
-    return result;
-  } catch (err: unknown) {
-    if (session.inTransaction()) {
-      try {
-        await session.abortTransaction();
-      } catch {
-        // Ignore secondary abort errors while preserving the primary failure
+    return await session.withTransaction(
+      async () => {
+        return await work(session);
+      },
+      {
+        readConcern: { level: "snapshot" },
+        writeConcern: { w: "majority" },
       }
-    }
+    );
+  } catch (err: unknown) {
     if (isTransactionUnsupportedError(err)) {
       throw new PracticeAccountError(
         "TRANSACTION_UNAVAILABLE",
