@@ -8,6 +8,7 @@ import {
   paginationQuerySchema,
   resetAccountBodySchema,
 } from "../../shared/validation/schemas";
+import { accountResetRateLimiter } from "../../shared/security";
 
 export function createAccountRouter(
   controller: AccountController,
@@ -43,6 +44,7 @@ export function createAccountRouter(
   );
   router.post(
     "/reset",
+    accountResetRateLimiter,
     validateRequest({
       headers: idempotencyKeyHeaderObjectSchema,
       body: resetAccountBodySchema,

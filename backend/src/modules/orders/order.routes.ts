@@ -7,6 +7,7 @@ import {
   listOrdersQuerySchema,
   orderIdParamsSchema,
 } from "../../shared/validation/schemas";
+import { tradingRateLimiter } from "../../shared/security";
 
 export function createOrderRouter(
   controller: OrderController,
@@ -18,6 +19,7 @@ export function createOrderRouter(
 
   router.post(
     "/",
+    tradingRateLimiter,
     validateRequest({
       headers: idempotencyKeyHeaderObjectSchema,
       body: createOrderBodySchema,

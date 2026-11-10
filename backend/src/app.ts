@@ -4,13 +4,18 @@ import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
 import { noSqlSanitizer } from "./shared/validation/validation.middleware";
+import {
+  requestIdMiddleware,
+  globalApiRateLimiter,
+  logError,
+} from "./shared/security";
 
 export interface AppConfig {
   isProduction: boolean;
   allowedOrigins: readonly string[];
   router?: Router;
+  trustProxy?: boolean | number | string;
 }
 
 type AsyncRouteHandler = (
@@ -46,14 +51,31 @@ export function createApp(config: AppConfig): Express {
   // environment before enabling Express 'trust proxy'.
   // Do NOT set trust proxy to true, 1, or 2 without live staging inspection.
   // Accurate per-client IP rate limiting on Render remains dependent on this verification.
+  if (config.trustProxy !== undefined) {
+    app.set("trust proxy", config.trustProxy);
+  } else {
+    app.set("trust proxy", false);
+  }
 
-  // Helmet for standard HTTP security headers
-  app.use(helmet());
+  // Request correlation: X-Request-Id header propagation & req.id assignment
+  app.use(requestIdMiddleware);
+
+  // Helmet for HTTP security headers
+  app.use(
+    helmet({
+      xContentTypeOptions: true,
+      xFrameOptions: { action: "deny" },
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      hsts: config.isProduction
+        ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+        : false,
+    })
+  );
 
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server, UptimeRobot)
+        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server, UptimeRobot, tests)
         if (!origin) {
           return callback(null, true);
         }
@@ -63,28 +85,21 @@ export function createApp(config: AppConfig): Express {
         return callback(new Error(`CORS blocked: Origin ${origin} not permitted`));
       },
       credentials: true,
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization"],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "Idempotency-Key",
+        "X-CSRF-Token",
+        "Origin",
+        "X-Request-Id",
+      ],
+      exposedHeaders: ["X-Request-Id", "Retry-After"],
     })
   );
 
   // Global Rate Limiting (Health checks skipped)
-  const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 200, // limit each IP to 200 requests per windowMs
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-      status: 429,
-      error: "Too many requests, please try again later.",
-    },
-    skip: (req) => {
-      // Crucial requirement: Ensure UptimeRobot and health checks are never rate-limited
-      return req.path.startsWith("/health");
-    },
-  });
-
-  app.use(apiLimiter);
+  app.use(globalApiRateLimiter);
 
   // Cookie Parser for HttpOnly refresh tokens and CSRF double-submit cookies
   app.use(cookieParser());
@@ -232,7 +247,7 @@ export function createApp(config: AppConfig): Express {
 
     const errorMessage = err instanceof Error ? err.message : "Internal Server Error";
 
-    console.error(`[ERROR] ${req.method} ${req.originalUrl}:`, errorMessage);
+    logError(`${req.method} ${req.originalUrl}`, errorMessage, req);
 
     return res.status(500).json({
       status: 500,

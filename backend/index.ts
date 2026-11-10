@@ -115,6 +115,7 @@ const app = createApp({
   isProduction: config.isProduction,
   allowedOrigins: config.allowedOrigins,
   router: appRouter,
+  trustProxy: config.trustProxy,
 });
 
 // ==========================================

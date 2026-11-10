@@ -15,6 +15,7 @@ export interface EnvConfig {
   jwtAccessSecret: string;
   jwtIssuer: string;
   jwtAudience: string;
+  trustProxy?: boolean | number | string;
 }
 
 export class EnvConfigValidationError extends Error {
@@ -709,6 +710,20 @@ export function loadEnvConfig(
     Array.from(new Set([frontendResult.origin, dashboardResult.origin]))
   );
 
+  let trustProxy: boolean | number | string = false;
+  if (env.TRUST_PROXY !== undefined && env.TRUST_PROXY.trim() !== "") {
+    const raw = env.TRUST_PROXY.trim();
+    if (raw.toLowerCase() === "true") {
+      trustProxy = true;
+    } else if (raw.toLowerCase() === "false") {
+      trustProxy = false;
+    } else if (/^\d+$/.test(raw)) {
+      trustProxy = Number(raw);
+    } else {
+      trustProxy = raw;
+    }
+  }
+
   return Object.freeze({
     nodeEnv: nodeEnvResult.value,
     isProduction,
@@ -724,5 +739,6 @@ export function loadEnvConfig(
     jwtAccessSecret: jwtSecretResult.value,
     jwtIssuer,
     jwtAudience,
+    trustProxy,
   });
 }
