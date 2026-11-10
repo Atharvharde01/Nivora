@@ -1,6 +1,10 @@
 import "dotenv/config";
 import mongoose from "mongoose";
 import { createApp } from "./src/app";
+import {
+  connectDatabase,
+  DatabaseConnectionError,
+} from "./src/config/database";
 import { loadEnvConfig, EnvConfig } from "./src/config/env";
 
 // ==========================================
@@ -32,18 +36,16 @@ let isShuttingDown = false;
 async function startServer(): Promise<void> {
   try {
     console.log("Connecting to MongoDB...");
-    await mongoose.connect(config.mongoUrl);
+    await connectDatabase(config.mongoUrl, config.isProduction);
     console.log("MongoDB connection established successfully.");
 
     server = app.listen(config.port, () => {
       console.log(`Server listening on port ${config.port} [${config.nodeEnv}]`);
     });
   } catch (err: unknown) {
-    if (err instanceof Error) {
-      console.error("FATAL: Failed to connect to MongoDB:", err.message);
-    } else {
-      console.error("FATAL: Failed to connect to MongoDB:", err);
-    }
+    const category =
+      err instanceof DatabaseConnectionError ? err.category : "UNKNOWN";
+    console.error(`FATAL: MongoDB connection failed. Category: ${category}.`);
     process.exit(1);
   }
 }
@@ -59,7 +61,7 @@ async function gracefulShutdown(signal: string): Promise<void> {
   if (server) {
     server.close(async (err) => {
       if (err) {
-        console.error("Error closing HTTP server:", err.message);
+        console.error("Error closing HTTP server during shutdown.");
       } else {
         console.log("HTTP server closed.");
       }
@@ -68,9 +70,8 @@ async function gracefulShutdown(signal: string): Promise<void> {
         await mongoose.disconnect();
         console.log("MongoDB disconnected cleanly.");
         process.exit(0);
-      } catch (dbErr: unknown) {
-        const msg = dbErr instanceof Error ? dbErr.message : String(dbErr);
-        console.error("Error disconnecting MongoDB:", msg);
+      } catch {
+        console.error("Error disconnecting MongoDB during shutdown.");
         process.exit(1);
       }
     });
@@ -83,10 +84,11 @@ async function gracefulShutdown(signal: string): Promise<void> {
   } else {
     try {
       await mongoose.disconnect();
+      process.exit(0);
     } catch {
-      // ignore
+      console.error("Error disconnecting MongoDB during shutdown.");
+      process.exit(1);
     }
-    process.exit(0);
   }
 }
 
