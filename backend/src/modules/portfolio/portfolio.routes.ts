@@ -1,5 +1,10 @@
 import { Router, RequestHandler } from "express";
 import { PortfolioController } from "./portfolio.controller";
+import { validateRequest } from "../../shared/validation/validation.middleware";
+import {
+  instrumentIdParamsSchema,
+  portfolioQuerySchema,
+} from "../../shared/validation/schemas";
 
 export function createPortfolioRouter(
   controller: PortfolioController,
@@ -9,8 +14,19 @@ export function createPortfolioRouter(
 
   router.use(authMiddleware);
 
-  router.get("/", controller.getPortfolio);
-  router.get("/positions/:instrumentId", controller.getPositionByInstrumentId);
+  router.get(
+    "/",
+    validateRequest({ query: portfolioQuerySchema }),
+    controller.getPortfolio
+  );
+  router.get(
+    "/positions/:instrumentId",
+    validateRequest({
+      params: instrumentIdParamsSchema,
+      query: portfolioQuerySchema,
+    }),
+    controller.getPositionByInstrumentId
+  );
 
   return router;
 }

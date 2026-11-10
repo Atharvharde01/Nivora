@@ -3,6 +3,12 @@ import rateLimit from "express-rate-limit";
 import { AuthController } from "./auth.controller";
 import { JwtService } from "./jwt.service";
 import { createAuthMiddleware } from "./auth.middleware";
+import { validateRequest } from "../../shared/validation/validation.middleware";
+import {
+  requestOtpBodySchema,
+  sessionIdParamsSchema,
+  verifyOtpBodySchema,
+} from "../../shared/validation/schemas";
 
 export interface AuthRouterDependencies {
   authController: AuthController;
@@ -60,8 +66,18 @@ export function createAuthRouter(
     },
   });
 
-  router.post("/otp/request", otpRequestLimiter, authController.requestOtp);
-  router.post("/otp/verify", otpVerifyLimiter, authController.verifyOtp);
+  router.post(
+    "/otp/request",
+    otpRequestLimiter,
+    validateRequest({ body: requestOtpBodySchema }),
+    authController.requestOtp
+  );
+  router.post(
+    "/otp/verify",
+    otpVerifyLimiter,
+    validateRequest({ body: verifyOtpBodySchema }),
+    authController.verifyOtp
+  );
   router.post("/refresh", refreshLimiter, authController.refresh);
   router.post("/logout", authController.logout);
 
@@ -73,6 +89,7 @@ export function createAuthRouter(
     router.delete(
       "/sessions/:sessionId",
       authMiddleware,
+      validateRequest({ params: sessionIdParamsSchema }),
       authController.revokeSession
     );
   }

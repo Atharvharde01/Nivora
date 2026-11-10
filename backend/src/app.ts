@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
+import { noSqlSanitizer } from "./shared/validation/validation.middleware";
 
 export interface AppConfig {
   isProduction: boolean;
@@ -88,8 +89,12 @@ export function createApp(config: AppConfig): Express {
   // Cookie Parser for HttpOnly refresh tokens and CSRF double-submit cookies
   app.use(cookieParser());
 
-  // JSON Request Limit (10kb prevents large payload DoS)
+  // JSON & URL-encoded Request Limits (10kb prevents large payload DoS)
   app.use(bodyParser.json({ limit: "10kb" }));
+  app.use(bodyParser.urlencoded({ extended: true, limit: "10kb" }));
+
+  // Global NoSQL query injection sanitizer
+  app.use(noSqlSanitizer);
 
   // ==========================================
   // 2. HEALTH CHECK ENDPOINTS (UPTIMEROBOT)
@@ -200,6 +205,20 @@ export function createApp(config: AppConfig): Express {
       return res.status(403).json({
         status: 403,
         error: err.message,
+      });
+    }
+
+    // Payload too large
+    if (
+      (typeof err === "object" && err !== null && "type" in err && (err as { type: unknown }).type === "entity.too.large") ||
+      (typeof err === "object" && err !== null && "status" in err && (err as { status: unknown }).status === 413)
+    ) {
+      return res.status(413).json({
+        success: false,
+        error: {
+          code: "PAYLOAD_TOO_LARGE",
+          message: "Request payload exceeds size limit.",
+        },
       });
     }
 

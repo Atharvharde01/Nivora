@@ -1,5 +1,12 @@
 import { Router, RequestHandler } from "express";
 import { OrderController } from "./order.controller";
+import { validateRequest } from "../../shared/validation/validation.middleware";
+import {
+  createOrderBodySchema,
+  idempotencyKeyHeaderObjectSchema,
+  listOrdersQuerySchema,
+  orderIdParamsSchema,
+} from "../../shared/validation/schemas";
 
 export function createOrderRouter(
   controller: OrderController,
@@ -9,9 +16,24 @@ export function createOrderRouter(
 
   router.use(authMiddleware);
 
-  router.post("/", controller.createOrder);
-  router.get("/", controller.listOrders);
-  router.get("/:orderId", controller.getOrderById);
+  router.post(
+    "/",
+    validateRequest({
+      headers: idempotencyKeyHeaderObjectSchema,
+      body: createOrderBodySchema,
+    }),
+    controller.createOrder
+  );
+  router.get(
+    "/",
+    validateRequest({ query: listOrdersQuerySchema }),
+    controller.listOrders
+  );
+  router.get(
+    "/:orderId",
+    validateRequest({ params: orderIdParamsSchema }),
+    controller.getOrderById
+  );
 
   return router;
 }
