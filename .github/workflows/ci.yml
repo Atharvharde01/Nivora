@@ -1,0 +1,47 @@
+name: NIVORA Backend CI
+
+on:
+  push:
+    branches:
+      - backend
+      - main
+  pull_request:
+    branches:
+      - backend
+      - main
+
+jobs:
+  backend-ci:
+    name: Test, Build & Security Audit
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install Clean Dependencies
+        run: npm ci
+
+      - name: Run Unit Tests
+        run: npm run test:unit
+
+      - name: Run Integration Tests (MongoDB Replica-Set)
+        run: npm run test:integration
+
+      - name: TypeScript Build (tsc)
+        run: npm run build
+
+      - name: Security Vulnerability Audit
+        run: |
+          npm audit
+          npm audit --omit=dev
