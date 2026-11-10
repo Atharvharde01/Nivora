@@ -7,9 +7,9 @@
     "dev": "tsx watch index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test:unit": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts",
+    "test:unit": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/modules/auth/jwt.service.test.ts",
     "test:integration": "tsx --test src/test/integration/**/*.integration.test.ts",
-    "test:all": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/test/integration/**/*.integration.test.ts",
+    "test:all": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/modules/auth/jwt.service.test.ts src/test/integration/**/*.integration.test.ts",
     "test": "npm run test:all"
   },
   "author": "",
@@ -17,6 +17,7 @@
   "devDependencies": {
     "@types/cors": "2.8.17",
     "@types/express": "4.17.21",
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "22.0.0",
     "mongodb-memory-server": "^10.1.4",
     "tsx": "4.23.15",
@@ -29,6 +30,7 @@
     "express": "^4.22.3",
     "express-rate-limit": "^8.7.3",
     "helmet": "^8.3.0",
+    "jsonwebtoken": "^9.0.3",
     "mongoose": "^8.24.8",
     "passport": "^0.7.0",
     "passport-local": "^1.0.0",

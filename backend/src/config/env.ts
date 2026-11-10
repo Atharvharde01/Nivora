@@ -12,6 +12,9 @@ export interface EnvConfig {
   brevoApiKey: string;
   brevoSenderEmail: string;
   brevoSenderName: string;
+  jwtAccessSecret: string;
+  jwtIssuer: string;
+  jwtAudience: string;
 }
 
 export class EnvConfigValidationError extends Error {
@@ -582,6 +585,33 @@ function validateBrevoSenderName(rawName: string | undefined): {
   };
 }
 
+function validateJwtAccessSecret(
+  rawSecret: string | undefined,
+  isProduction: boolean
+): { valid: true; value: string } | { valid: false; error: string } {
+  const fallback =
+    "development_jwt_access_secret_key_minimum_32_characters_long";
+  if (!rawSecret || !rawSecret.trim()) {
+    if (isProduction) {
+      return {
+        valid: false,
+        error:
+          "JWT_ACCESS_SECRET is required in production and must be at least 32 characters long.",
+      };
+    }
+    return { valid: true, value: fallback };
+  }
+  const trimmed = rawSecret.trim();
+  const minLength = isProduction ? 32 : 16;
+  if (trimmed.length < minLength) {
+    return {
+      valid: false,
+      error: `JWT_ACCESS_SECRET must be at least ${minLength} characters long.`,
+    };
+  }
+  return { valid: true, value: trimmed };
+}
+
 export function loadEnvConfig(
   env: NodeJS.ProcessEnv = process.env
 ): EnvConfig {
@@ -643,6 +673,23 @@ export function loadEnvConfig(
 
   const brevoSenderNameResult = validateBrevoSenderName(env.BREVO_SENDER_NAME);
 
+  const jwtSecretResult = validateJwtAccessSecret(
+    env.JWT_ACCESS_SECRET,
+    isProduction
+  );
+  if (!jwtSecretResult.valid) {
+    errors.push(jwtSecretResult.error);
+  }
+
+  const jwtIssuer =
+    env.JWT_ISSUER && env.JWT_ISSUER.trim()
+      ? env.JWT_ISSUER.trim()
+      : "nivora-api";
+  const jwtAudience =
+    env.JWT_AUDIENCE && env.JWT_AUDIENCE.trim()
+      ? env.JWT_AUDIENCE.trim()
+      : "nivora-client";
+
   if (
     errors.length > 0 ||
     !nodeEnvResult.valid ||
@@ -652,7 +699,8 @@ export function loadEnvConfig(
     !dashboardResult.valid ||
     !otpSecretResult.valid ||
     !brevoApiKeyResult.valid ||
-    !brevoSenderEmailResult.valid
+    !brevoSenderEmailResult.valid ||
+    !jwtSecretResult.valid
   ) {
     throw new EnvConfigValidationError(errors);
   }
@@ -673,5 +721,8 @@ export function loadEnvConfig(
     brevoApiKey: brevoApiKeyResult.value,
     brevoSenderEmail: brevoSenderEmailResult.value,
     brevoSenderName: brevoSenderNameResult.value,
+    jwtAccessSecret: jwtSecretResult.value,
+    jwtIssuer,
+    jwtAudience,
   });
 }

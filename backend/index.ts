@@ -8,6 +8,8 @@ import {
 import { loadEnvConfig, EnvConfig } from "./src/config/env";
 import { BrevoEmailService } from "./src/modules/auth/email.service";
 import { OtpService } from "./src/modules/auth/otp.service";
+import { JwtService } from "./src/modules/auth/jwt.service";
+import { AuthService } from "./src/modules/auth/auth.service";
 import { AuthController } from "./src/modules/auth/auth.controller";
 import { createAppRouter } from "./src/routes";
 
@@ -37,12 +39,24 @@ const otpService = new OtpService({
   emailService,
 });
 
+const jwtService = new JwtService({
+  accessSecret: config.jwtAccessSecret,
+  issuer: config.jwtIssuer,
+  audience: config.jwtAudience,
+});
+
+const authService = new AuthService({
+  otpService,
+  jwtService,
+});
+
 const authController = new AuthController({
   otpService,
+  authService,
 });
 
 const appRouter = createAppRouter({
-  authDependencies: { authController },
+  authDependencies: { authController, jwtService },
 });
 
 const app = createApp({
