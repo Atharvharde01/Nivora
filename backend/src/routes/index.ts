@@ -9,6 +9,10 @@ import { WatchlistService } from "../modules/watchlist/watchlist.service";
 import { createWatchlistRouter } from "../modules/watchlist/watchlist.routes";
 import { OrderController } from "../modules/orders/order.controller";
 import { createOrderRouter } from "../modules/orders/order.routes";
+import { PortfolioController } from "../modules/portfolio/portfolio.controller";
+import { createPortfolioRouter } from "../modules/portfolio/portfolio.routes";
+import { TradeController } from "../modules/trades/trade.controller";
+import { createTradeRouter } from "../modules/trades/trade.routes";
 
 export interface AppRouterDependencies {
   authDependencies: AuthRouterDependencies;
@@ -16,6 +20,8 @@ export interface AppRouterDependencies {
   instrumentController?: InstrumentController;
   watchlistController?: WatchlistController;
   orderController?: OrderController;
+  portfolioController?: PortfolioController;
+  tradeController?: TradeController;
 }
 
 export function createAppRouter(dependencies: AppRouterDependencies): Router {
@@ -42,6 +48,10 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
     new WatchlistController({ watchlistService: new WatchlistService() });
   const orderController =
     dependencies.orderController ?? new OrderController();
+  const portfolioController =
+    dependencies.portfolioController ?? new PortfolioController();
+  const tradeController =
+    dependencies.tradeController ?? new TradeController();
 
   apiV1Router.use(
     "/instruments",
@@ -55,6 +65,14 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
   apiV1Router.use(
     "/orders",
     createOrderRouter(orderController, authMiddleware)
+  );
+  apiV1Router.use(
+    "/portfolio",
+    createPortfolioRouter(portfolioController, authMiddleware)
+  );
+  apiV1Router.use(
+    "/trades",
+    createTradeRouter(tradeController, authMiddleware)
   );
 
   router.use("/api/v1", apiV1Router);

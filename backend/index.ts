@@ -18,6 +18,9 @@ import { WatchlistController } from "./src/modules/watchlist/watchlist.controlle
 import { PracticeAccountService } from "./src/modules/practice-accounts/account.service";
 import { OrderExecutionService } from "./src/modules/orders/order-execution.service";
 import { OrderController } from "./src/modules/orders/order.controller";
+import { PortfolioService } from "./src/modules/portfolio/portfolio.service";
+import { PortfolioController } from "./src/modules/portfolio/portfolio.controller";
+import { TradeController } from "./src/modules/trades/trade.controller";
 import { createAppRouter } from "./src/routes";
 
 // ==========================================
@@ -85,11 +88,22 @@ const orderController = new OrderController({
   practiceAccountService,
 });
 
+const portfolioService = new PortfolioService({
+  quoteService: instrumentQuoteService,
+  accountService: practiceAccountService,
+});
+const portfolioController = new PortfolioController({
+  portfolioService,
+});
+const tradeController = new TradeController();
+
 const appRouter = createAppRouter({
   authDependencies: { authController, jwtService },
   instrumentController,
   watchlistController,
   orderController,
+  portfolioController,
+  tradeController,
 });
 
 const app = createApp({
