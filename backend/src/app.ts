@@ -1,4 +1,4 @@
-import express, { Express, Request, Response, NextFunction } from "express";
+import express, { Express, Request, Response, NextFunction, Router } from "express";
 import mongoose from "mongoose";
 import bodyParser from "body-parser";
 import cors from "cors";
@@ -8,6 +8,7 @@ import rateLimit from "express-rate-limit";
 export interface AppConfig {
   isProduction: boolean;
   allowedOrigins: readonly string[];
+  router?: Router;
 }
 
 type AsyncRouteHandler = (
@@ -157,6 +158,10 @@ export function createApp(config: AppConfig): Express {
   // ==========================================
   // 3. API ROUTES
   // ==========================================
+  if (config.router) {
+    app.use(config.router);
+  }
+
   app.get("/allHoldings", (_req: Request, res: Response) => {
     res.status(410).json(LEGACY_ENDPOINT_RETIRED_RESPONSE);
   });
@@ -214,4 +219,3 @@ export function createApp(config: AppConfig): Express {
 
   return app;
 }
-

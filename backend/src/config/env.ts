@@ -8,6 +8,10 @@ export interface EnvConfig {
   frontendUrl: string;
   dashboardUrl: string;
   allowedOrigins: readonly string[];
+  otpSecret: string;
+  brevoApiKey: string;
+  brevoSenderEmail: string;
+  brevoSenderName: string;
 }
 
 export class EnvConfigValidationError extends Error {
@@ -504,6 +508,80 @@ function validateAndNormalizeOrigin(
   return { valid: true, origin: parsed.origin };
 }
 
+function validateOtpSecret(
+  rawSecret: string | undefined,
+  isProduction: boolean
+): { valid: true; value: string } | { valid: false; error: string } {
+  const fallback = "development_otp_hmac_secret_key_minimum_32_characters_long";
+  if (!rawSecret || !rawSecret.trim()) {
+    if (isProduction) {
+      return {
+        valid: false,
+        error: "OTP_HMAC_SECRET is required in production and must be at least 32 characters long.",
+      };
+    }
+    return { valid: true, value: fallback };
+  }
+  const trimmed = rawSecret.trim();
+  const minLength = isProduction ? 32 : 16;
+  if (trimmed.length < minLength) {
+    return {
+      valid: false,
+      error: `OTP_HMAC_SECRET must be at least ${minLength} characters long.`,
+    };
+  }
+  return { valid: true, value: trimmed };
+}
+
+function validateBrevoApiKey(
+  rawKey: string | undefined,
+  isProduction: boolean
+): { valid: true; value: string } | { valid: false; error: string } {
+  if (!rawKey || !rawKey.trim()) {
+    if (isProduction) {
+      return {
+        valid: false,
+        error: "BREVO_API_KEY is required in production.",
+      };
+    }
+    return { valid: true, value: "mock-brevo-api-key" };
+  }
+  return { valid: true, value: rawKey.trim() };
+}
+
+function validateBrevoSenderEmail(
+  rawEmail: string | undefined,
+  isProduction: boolean
+): { valid: true; value: string } | { valid: false; error: string } {
+  if (!rawEmail || !rawEmail.trim()) {
+    if (isProduction) {
+      return {
+        valid: false,
+        error: "BREVO_SENDER_EMAIL is required in production.",
+      };
+    }
+    return { valid: true, value: "noreply@nivora.app" };
+  }
+  const trimmed = rawEmail.trim().toLowerCase();
+  if (!trimmed.includes("@") || trimmed.length > 254) {
+    return {
+      valid: false,
+      error: "BREVO_SENDER_EMAIL must be a valid email address.",
+    };
+  }
+  return { valid: true, value: trimmed };
+}
+
+function validateBrevoSenderName(rawName: string | undefined): {
+  valid: true;
+  value: string;
+} {
+  return {
+    valid: true,
+    value: rawName && rawName.trim() ? rawName.trim() : "NIVORA",
+  };
+}
+
 export function loadEnvConfig(
   env: NodeJS.ProcessEnv = process.env
 ): EnvConfig {
@@ -545,13 +623,36 @@ export function loadEnvConfig(
     errors.push(dashboardResult.error);
   }
 
+  const otpSecretResult = validateOtpSecret(env.OTP_HMAC_SECRET, isProduction);
+  if (!otpSecretResult.valid) {
+    errors.push(otpSecretResult.error);
+  }
+
+  const brevoApiKeyResult = validateBrevoApiKey(env.BREVO_API_KEY, isProduction);
+  if (!brevoApiKeyResult.valid) {
+    errors.push(brevoApiKeyResult.error);
+  }
+
+  const brevoSenderEmailResult = validateBrevoSenderEmail(
+    env.BREVO_SENDER_EMAIL,
+    isProduction
+  );
+  if (!brevoSenderEmailResult.valid) {
+    errors.push(brevoSenderEmailResult.error);
+  }
+
+  const brevoSenderNameResult = validateBrevoSenderName(env.BREVO_SENDER_NAME);
+
   if (
     errors.length > 0 ||
     !nodeEnvResult.valid ||
     !portResult.valid ||
     !mongoResult.valid ||
     !frontendResult.valid ||
-    !dashboardResult.valid
+    !dashboardResult.valid ||
+    !otpSecretResult.valid ||
+    !brevoApiKeyResult.valid ||
+    !brevoSenderEmailResult.valid
   ) {
     throw new EnvConfigValidationError(errors);
   }
@@ -568,6 +669,9 @@ export function loadEnvConfig(
     frontendUrl: frontendResult.origin,
     dashboardUrl: dashboardResult.origin,
     allowedOrigins,
+    otpSecret: otpSecretResult.value,
+    brevoApiKey: brevoApiKeyResult.value,
+    brevoSenderEmail: brevoSenderEmailResult.value,
+    brevoSenderName: brevoSenderNameResult.value,
   });
 }
-

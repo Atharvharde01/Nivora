@@ -16,6 +16,8 @@ import { TradeModel } from "../../modules/trades/trade.model";
 import { UserModel } from "../../modules/users/user.model";
 import { IUser } from "../../modules/users/user.types";
 import { WatchlistItemModel } from "../../modules/watchlist/watchlist.model";
+import { OtpChallengeModel } from "../../modules/auth/otp-challenge.model";
+import { SessionModel } from "../../modules/auth/session.model";
 
 const DEFAULT_WINDOWS_MONGOD_PATH =
   "C:\\Program Files\\MongoDB\\Server\\8.2\\bin\\mongod.exe";
@@ -216,6 +218,8 @@ export async function setupIntegrationTestDb(): Promise<string> {
     LedgerEntryModel.createCollection(),
     WatchlistItemModel.createCollection(),
     TransactionVerificationModel.createCollection(),
+    OtpChallengeModel.createCollection(),
+    SessionModel.createCollection(),
   ]);
 
   await verifyTransactionCapability();
@@ -241,6 +245,8 @@ export async function clearDatabase(): Promise<void> {
     LedgerEntryModel.deleteMany({}),
     WatchlistItemModel.deleteMany({}),
     TransactionVerificationModel.deleteMany({}),
+    OtpChallengeModel.deleteMany({}),
+    SessionModel.deleteMany({}),
   ]);
 }
 

@@ -6,6 +6,10 @@ import {
   DatabaseConnectionError,
 } from "./src/config/database";
 import { loadEnvConfig, EnvConfig } from "./src/config/env";
+import { BrevoEmailService } from "./src/modules/auth/email.service";
+import { OtpService } from "./src/modules/auth/otp.service";
+import { AuthController } from "./src/modules/auth/auth.controller";
+import { createAppRouter } from "./src/routes";
 
 // ==========================================
 // 1. ENVIRONMENT & CONFIGURATION VALIDATION
@@ -22,9 +26,29 @@ try {
   process.exit(1);
 }
 
+const emailService = new BrevoEmailService({
+  apiKey: config.brevoApiKey,
+  senderEmail: config.brevoSenderEmail,
+  senderName: config.brevoSenderName,
+});
+
+const otpService = new OtpService({
+  hmacSecret: config.otpSecret,
+  emailService,
+});
+
+const authController = new AuthController({
+  otpService,
+});
+
+const appRouter = createAppRouter({
+  authDependencies: { authController },
+});
+
 const app = createApp({
   isProduction: config.isProduction,
   allowedOrigins: config.allowedOrigins,
+  router: appRouter,
 });
 
 // ==========================================
