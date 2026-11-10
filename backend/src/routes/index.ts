@@ -7,12 +7,15 @@ import { createInstrumentRouter } from "../modules/instruments/instrument.routes
 import { WatchlistController } from "../modules/watchlist/watchlist.controller";
 import { WatchlistService } from "../modules/watchlist/watchlist.service";
 import { createWatchlistRouter } from "../modules/watchlist/watchlist.routes";
+import { OrderController } from "../modules/orders/order.controller";
+import { createOrderRouter } from "../modules/orders/order.routes";
 
 export interface AppRouterDependencies {
   authDependencies: AuthRouterDependencies;
   jwtService?: JwtService;
   instrumentController?: InstrumentController;
   watchlistController?: WatchlistController;
+  orderController?: OrderController;
 }
 
 export function createAppRouter(dependencies: AppRouterDependencies): Router {
@@ -37,6 +40,8 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
   const watchlistController =
     dependencies.watchlistController ??
     new WatchlistController({ watchlistService: new WatchlistService() });
+  const orderController =
+    dependencies.orderController ?? new OrderController();
 
   apiV1Router.use(
     "/instruments",
@@ -46,6 +51,10 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
   apiV1Router.use(
     "/watchlist",
     createWatchlistRouter(watchlistController, authMiddleware)
+  );
+  apiV1Router.use(
+    "/orders",
+    createOrderRouter(orderController, authMiddleware)
   );
 
   router.use("/api/v1", apiV1Router);

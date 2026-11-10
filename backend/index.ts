@@ -15,6 +15,9 @@ import { InstrumentQuoteService } from "./src/modules/instruments/instrument-quo
 import { InstrumentController } from "./src/modules/instruments/instrument.controller";
 import { WatchlistService } from "./src/modules/watchlist/watchlist.service";
 import { WatchlistController } from "./src/modules/watchlist/watchlist.controller";
+import { PracticeAccountService } from "./src/modules/practice-accounts/account.service";
+import { OrderExecutionService } from "./src/modules/orders/order-execution.service";
+import { OrderController } from "./src/modules/orders/order.controller";
 import { createAppRouter } from "./src/routes";
 
 // ==========================================
@@ -73,10 +76,20 @@ const watchlistController = new WatchlistController({
   watchlistService,
 });
 
+const practiceAccountService = new PracticeAccountService();
+const orderExecutionService = new OrderExecutionService({
+  quoteService: instrumentQuoteService,
+});
+const orderController = new OrderController({
+  orderExecutionService,
+  practiceAccountService,
+});
+
 const appRouter = createAppRouter({
   authDependencies: { authController, jwtService },
   instrumentController,
   watchlistController,
+  orderController,
 });
 
 const app = createApp({
