@@ -1,9 +1,13 @@
 import express, { Express, Request, Response, NextFunction, Router } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import mongoose from "mongoose";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
+import yaml from "yaml";
+import swaggerUi from "swagger-ui-express";
 import { noSqlSanitizer } from "./shared/validation/validation.middleware";
 import {
   requestIdMiddleware,
@@ -17,6 +21,36 @@ export interface AppConfig {
   allowedOrigins: readonly string[];
   router?: Router;
   trustProxy?: boolean | number | string;
+  enableSwagger?: boolean;
+}
+
+/**
+ * Safely resolves and parses the OpenAPI specification document.
+ */
+export function loadOpenApiSpec(): {
+  rawYaml: string;
+  parsed: Record<string, unknown>;
+} | null {
+  const possiblePaths = [
+    path.resolve(__dirname, "../docs/openapi.yaml"),
+    path.resolve(__dirname, "../../docs/openapi.yaml"),
+    path.resolve(process.cwd(), "docs/openapi.yaml"),
+    path.resolve(process.cwd(), "backend/docs/openapi.yaml"),
+  ];
+
+  for (const candidatePath of possiblePaths) {
+    if (fs.existsSync(candidatePath)) {
+      try {
+        const rawYaml = fs.readFileSync(candidatePath, "utf8");
+        const parsed = yaml.parse(rawYaml) as Record<string, unknown>;
+        return { rawYaml, parsed };
+      } catch {
+        // Continue searching alternative paths
+      }
+    }
+  }
+
+  return null;
 }
 
 type AsyncRouteHandler = (
@@ -179,6 +213,41 @@ export function createApp(config: AppConfig): Express {
       }
     })
   );
+
+  // ==========================================
+  // 2.5 API DOCUMENTATION (SWAGGER UI & OPENAPI)
+  // ==========================================
+  const shouldEnableSwagger =
+    config.enableSwagger ??
+    (!config.isProduction || process.env.ENABLE_SWAGGER_UI === "true");
+
+  if (shouldEnableSwagger) {
+    const spec = loadOpenApiSpec();
+    if (spec) {
+      app.get("/docs/openapi.yaml", (_req: Request, res: Response) => {
+        res.setHeader("Content-Type", "text/yaml; charset=utf-8");
+        res.status(200).send(spec.rawYaml);
+      });
+
+      app.get("/docs/openapi.json", (_req: Request, res: Response) => {
+        res.status(200).json(spec.parsed);
+      });
+
+      const swaggerUiOpts: swaggerUi.SwaggerUiOptions = {
+        customSiteTitle: "NIVORA API Documentation",
+      };
+
+      app.use(
+        "/docs",
+        (_req: Request, res: Response, next: NextFunction) => {
+          res.removeHeader("Content-Security-Policy");
+          next();
+        },
+        swaggerUi.serve,
+        swaggerUi.setup(spec.parsed, swaggerUiOpts)
+      );
+    }
+  }
 
   // ==========================================
   // 3. API ROUTES
