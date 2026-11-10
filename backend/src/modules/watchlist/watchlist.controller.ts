@@ -46,16 +46,6 @@ export class WatchlistController {
         },
       });
     } catch (err: unknown) {
-      if (err instanceof WatchlistError) {
-        res.status(err.statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
@@ -109,16 +99,6 @@ export class WatchlistController {
         data: { item },
       });
     } catch (err: unknown) {
-      if (err instanceof WatchlistError) {
-        res.status(err.statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
@@ -171,16 +151,6 @@ export class WatchlistController {
         data: result,
       });
     } catch (err: unknown) {
-      if (err instanceof WatchlistError) {
-        res.status(err.statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
@@ -221,16 +191,6 @@ export class WatchlistController {
         },
       });
     } catch (err: unknown) {
-      if (err instanceof WatchlistError) {
-        res.status(err.statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };

@@ -204,35 +204,6 @@ export class OrderController {
         },
       });
     } catch (err: unknown) {
-      if (err instanceof OrderExecutionError) {
-        const statusCode = this.mapOrderErrorCodeToStatus(err.code);
-        res.status(statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
-
-      if (err instanceof PracticeAccountError) {
-        const statusCode =
-          err.code === "ACCOUNT_NOT_FOUND"
-            ? 404
-            : err.code === "ACCOUNT_OWNERSHIP_VIOLATION"
-            ? 403
-            : 400;
-        res.status(statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
-
       next(err);
     }
   };

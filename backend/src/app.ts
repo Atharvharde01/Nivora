@@ -10,6 +10,7 @@ import {
   globalApiRateLimiter,
   logError,
 } from "./shared/security";
+import { centralErrorHandler } from "./shared/errors";
 
 export interface AppConfig {
   isProduction: boolean;
@@ -213,47 +214,8 @@ export function createApp(config: AppConfig): Express {
     });
   });
 
-  // Centralized Express Error Handling Middleware (4 arguments required by Express)
-  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
-    // CORS origin rejection
-    if (err instanceof Error && err.message.startsWith("CORS blocked")) {
-      return res.status(403).json({
-        status: 403,
-        error: err.message,
-      });
-    }
-
-    // Payload too large
-    if (
-      (typeof err === "object" && err !== null && "type" in err && (err as { type: unknown }).type === "entity.too.large") ||
-      (typeof err === "object" && err !== null && "status" in err && (err as { status: unknown }).status === 413)
-    ) {
-      return res.status(413).json({
-        success: false,
-        error: {
-          code: "PAYLOAD_TOO_LARGE",
-          message: "Request payload exceeds size limit.",
-        },
-      });
-    }
-
-    // Malformed JSON payload from body-parser
-    if (err instanceof SyntaxError && "body" in err) {
-      return res.status(400).json({
-        status: 400,
-        error: "Malformed JSON payload",
-      });
-    }
-
-    const errorMessage = err instanceof Error ? err.message : "Internal Server Error";
-
-    logError(`${req.method} ${req.originalUrl}`, errorMessage, req);
-
-    return res.status(500).json({
-      status: 500,
-      error: config.isProduction ? "Internal Server Error" : errorMessage,
-    });
-  });
+  // Centralized Express Error Handling Middleware
+  app.use(centralErrorHandler(config.isProduction));
 
   return app;
 }

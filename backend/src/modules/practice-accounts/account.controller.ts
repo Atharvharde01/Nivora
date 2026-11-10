@@ -58,18 +58,6 @@ export class AccountController {
         data: { account },
       });
     } catch (err: unknown) {
-      if (err instanceof PracticeAccountError) {
-        const statusCode =
-          err.code === "ACTIVE_ACCOUNT_NOT_FOUND" ? 404 : 400;
-        res.status(statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
@@ -190,22 +178,6 @@ export class AccountController {
         data: { account },
       });
     } catch (err: unknown) {
-      if (err instanceof PracticeAccountError) {
-        const statusCode =
-          err.code === "ACCOUNT_NOT_FOUND"
-            ? 404
-            : err.code === "ACCOUNT_OWNERSHIP_VIOLATION"
-            ? 403
-            : 400;
-        res.status(statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
@@ -259,22 +231,6 @@ export class AccountController {
         data: { balance },
       });
     } catch (err: unknown) {
-      if (err instanceof PracticeAccountError) {
-        const statusCode =
-          err.code === "ACCOUNT_NOT_FOUND"
-            ? 404
-            : err.code === "ACCOUNT_OWNERSHIP_VIOLATION"
-            ? 403
-            : 400;
-        res.status(statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
@@ -410,22 +366,6 @@ export class AccountController {
         },
       });
     } catch (err: unknown) {
-      if (err instanceof PracticeAccountError) {
-        const statusCode =
-          err.code === "ACCOUNT_NOT_FOUND"
-            ? 404
-            : err.code === "ACCOUNT_OWNERSHIP_VIOLATION"
-            ? 403
-            : 400;
-        res.status(statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
@@ -561,22 +501,6 @@ export class AccountController {
         },
       });
     } catch (err: unknown) {
-      if (err instanceof PracticeAccountError) {
-        const statusCode =
-          err.code === "ACCOUNT_RESET_CONFLICT"
-            ? 409
-            : err.code === "ACTIVE_ACCOUNT_NOT_FOUND"
-            ? 404
-            : 400;
-        res.status(statusCode).json({
-          success: false,
-          error: {
-            code: err.code,
-            message: err.message,
-          },
-        });
-        return;
-      }
       next(err);
     }
   };
