@@ -1,6 +1,7 @@
 import express, { Express, Request, Response, NextFunction, Router } from "express";
 import mongoose from "mongoose";
 import bodyParser from "body-parser";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -83,6 +84,9 @@ export function createApp(config: AppConfig): Express {
   });
 
   app.use(apiLimiter);
+
+  // Cookie Parser for HttpOnly refresh tokens and CSRF double-submit cookies
+  app.use(cookieParser());
 
   // JSON Request Limit (10kb prevents large payload DoS)
   app.use(bodyParser.json({ limit: "10kb" }));

@@ -45,12 +45,36 @@ export function createAuthRouter(
     },
   });
 
+  // Rate limiter specifically for token refresh: 60 refreshes per 15 minutes per IP
+  const refreshLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 60,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      success: false,
+      error: {
+        code: "RATE_LIMIT_EXCEEDED",
+        message: "Too many token refresh requests. Please try again later.",
+      },
+    },
+  });
+
   router.post("/otp/request", otpRequestLimiter, authController.requestOtp);
   router.post("/otp/verify", otpVerifyLimiter, authController.verifyOtp);
+  router.post("/refresh", refreshLimiter, authController.refresh);
+  router.post("/logout", authController.logout);
 
   if (jwtService) {
     const authMiddleware = createAuthMiddleware(jwtService);
     router.get("/me", authMiddleware, authController.getMe);
+    router.post("/logout-all", authMiddleware, authController.logoutAll);
+    router.get("/sessions", authMiddleware, authController.getSessions);
+    router.delete(
+      "/sessions/:sessionId",
+      authMiddleware,
+      authController.revokeSession
+    );
   }
 
   return router;

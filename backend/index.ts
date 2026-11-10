@@ -53,6 +53,8 @@ const authService = new AuthService({
 const authController = new AuthController({
   otpService,
   authService,
+  cookieConfig: { isProduction: config.isProduction },
+  allowedOrigins: config.allowedOrigins,
 });
 
 const appRouter = createAppRouter({
