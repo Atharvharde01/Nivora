@@ -39,7 +39,7 @@ const VALID_NODE_ENVIRONMENTS: ReadonlySet<string> = new Set<NodeEnvironment>([
   "production",
 ]);
 
-const DEFAULT_PORT = "3002";
+const DEFAULT_PORT = "5000";
 
 function validateNodeEnv(
   rawNodeEnv: string | undefined

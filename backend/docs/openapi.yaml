@@ -12,7 +12,7 @@ info:
     - **Immutable Cash Ledger**: Every financial transaction writes an append-only cash ledger entry inside the same MongoDB ACID transaction.
     - **Idempotency**: All state-modifying trading and reset requests require an `Idempotency-Key` header (8-128 chars). Replays return the exact cached result with `wasIdempotentReplay: true`.
 servers:
-  - url: http://localhost:3002
+  - url: http://localhost:5000
     description: Local Development Server
   - url: https://nivora-backend.onrender.com
     description: Production / Staging Server (Render)

@@ -40,7 +40,7 @@ export async function runSmokeSuite(
     options.targetUrl ||
     process.env.TARGET_URL ||
     process.env.SMOKE_TEST_URL ||
-    "http://localhost:3002"
+    "http://localhost:5000"
   ).replace(/\/+$/, "");
 
   let authToken = options.authToken || process.env.SMOKE_AUTH_TOKEN;
