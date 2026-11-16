@@ -16,6 +16,9 @@ export interface EnvConfig {
   jwtIssuer: string;
   jwtAudience: string;
   trustProxy?: boolean | number | string;
+  marketSimulationEnabled?: boolean;
+  marketSimulationIntervalMs?: number;
+  marketSimulationMaxMoveBps?: number;
 }
 
 export class EnvConfigValidationError extends Error {
@@ -613,6 +616,76 @@ function validateJwtAccessSecret(
   return { valid: true, value: trimmed };
 }
 
+function validateMarketSimulationEnabled(
+  rawEnabled: string | undefined,
+  nodeEnv: NodeEnvironment | undefined
+): { valid: true; value: boolean } | { valid: false; error: string } {
+  if (rawEnabled === undefined || rawEnabled.trim() === "") {
+    return { valid: true, value: nodeEnv === "development" };
+  }
+  const normalized = rawEnabled.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") {
+    return { valid: true, value: true };
+  }
+  if (normalized === "false" || normalized === "0") {
+    return { valid: true, value: false };
+  }
+  return {
+    valid: false,
+    error: "MARKET_SIMULATION_ENABLED must be 'true' or 'false'.",
+  };
+}
+
+function validateMarketSimulationIntervalMs(
+  rawInterval: string | undefined
+): { valid: true; value: number } | { valid: false; error: string } {
+  if (rawInterval === undefined || rawInterval.trim() === "") {
+    return { valid: true, value: 5_000 };
+  }
+  const trimmed = rawInterval.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return {
+      valid: false,
+      error:
+        "MARKET_SIMULATION_INTERVAL_MS must be an integer between 500 and 300000.",
+    };
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed < 500 || parsed > 300_000) {
+    return {
+      valid: false,
+      error:
+        "MARKET_SIMULATION_INTERVAL_MS must be an integer between 500 and 300000.",
+    };
+  }
+  return { valid: true, value: parsed };
+}
+
+function validateMarketSimulationMaxMoveBps(
+  rawBps: string | undefined
+): { valid: true; value: number } | { valid: false; error: string } {
+  if (rawBps === undefined || rawBps.trim() === "") {
+    return { valid: true, value: 75 };
+  }
+  const trimmed = rawBps.trim();
+  if (!/^\d+$/.test(trimmed)) {
+    return {
+      valid: false,
+      error:
+        "MARKET_SIMULATION_MAX_MOVE_BPS must be an integer between 5 and 500.",
+    };
+  }
+  const parsed = Number(trimmed);
+  if (!Number.isSafeInteger(parsed) || parsed < 5 || parsed > 500) {
+    return {
+      valid: false,
+      error:
+        "MARKET_SIMULATION_MAX_MOVE_BPS must be an integer between 5 and 500.",
+    };
+  }
+  return { valid: true, value: parsed };
+}
+
 export function loadEnvConfig(
   env: NodeJS.ProcessEnv = process.env
 ): EnvConfig {
@@ -682,6 +755,28 @@ export function loadEnvConfig(
     errors.push(jwtSecretResult.error);
   }
 
+  const marketSimEnabledResult = validateMarketSimulationEnabled(
+    env.MARKET_SIMULATION_ENABLED,
+    nodeEnvResult.valid ? nodeEnvResult.value : undefined
+  );
+  if (!marketSimEnabledResult.valid) {
+    errors.push(marketSimEnabledResult.error);
+  }
+
+  const marketSimIntervalResult = validateMarketSimulationIntervalMs(
+    env.MARKET_SIMULATION_INTERVAL_MS
+  );
+  if (!marketSimIntervalResult.valid) {
+    errors.push(marketSimIntervalResult.error);
+  }
+
+  const marketSimMaxMoveResult = validateMarketSimulationMaxMoveBps(
+    env.MARKET_SIMULATION_MAX_MOVE_BPS
+  );
+  if (!marketSimMaxMoveResult.valid) {
+    errors.push(marketSimMaxMoveResult.error);
+  }
+
   const jwtIssuer =
     env.JWT_ISSUER && env.JWT_ISSUER.trim()
       ? env.JWT_ISSUER.trim()
@@ -701,7 +796,10 @@ export function loadEnvConfig(
     !otpSecretResult.valid ||
     !brevoApiKeyResult.valid ||
     !brevoSenderEmailResult.valid ||
-    !jwtSecretResult.valid
+    !jwtSecretResult.valid ||
+    !marketSimEnabledResult.valid ||
+    !marketSimIntervalResult.valid ||
+    !marketSimMaxMoveResult.valid
   ) {
     throw new EnvConfigValidationError(errors);
   }
@@ -740,5 +838,8 @@ export function loadEnvConfig(
     jwtIssuer,
     jwtAudience,
     trustProxy,
+    marketSimulationEnabled: marketSimEnabledResult.value,
+    marketSimulationIntervalMs: marketSimIntervalResult.value,
+    marketSimulationMaxMoveBps: marketSimMaxMoveResult.value,
   });
 }
