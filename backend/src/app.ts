@@ -1,13 +1,56 @@
-import express, { Express, Request, Response, NextFunction } from "express";
+import express, { Express, Request, Response, NextFunction, Router } from "express";
+import fs from "node:fs";
+import path from "node:path";
 import mongoose from "mongoose";
 import bodyParser from "body-parser";
+import cookieParser from "cookie-parser";
 import cors from "cors";
 import helmet from "helmet";
-import rateLimit from "express-rate-limit";
+import yaml from "yaml";
+import swaggerUi from "swagger-ui-express";
+import { noSqlSanitizer } from "./shared/validation/validation.middleware";
+import {
+  requestIdMiddleware,
+  globalApiRateLimiter,
+  logError,
+} from "./shared/security";
+import { centralErrorHandler } from "./shared/errors";
 
 export interface AppConfig {
   isProduction: boolean;
   allowedOrigins: readonly string[];
+  router?: Router;
+  trustProxy?: boolean | number | string;
+  enableSwagger?: boolean;
+}
+
+/**
+ * Safely resolves and parses the OpenAPI specification document.
+ */
+export function loadOpenApiSpec(): {
+  rawYaml: string;
+  parsed: Record<string, unknown>;
+} | null {
+  const possiblePaths = [
+    path.resolve(__dirname, "../docs/openapi.yaml"),
+    path.resolve(__dirname, "../../docs/openapi.yaml"),
+    path.resolve(process.cwd(), "docs/openapi.yaml"),
+    path.resolve(process.cwd(), "backend/docs/openapi.yaml"),
+  ];
+
+  for (const candidatePath of possiblePaths) {
+    if (fs.existsSync(candidatePath)) {
+      try {
+        const rawYaml = fs.readFileSync(candidatePath, "utf8");
+        const parsed = yaml.parse(rawYaml) as Record<string, unknown>;
+        return { rawYaml, parsed };
+      } catch {
+        // Continue searching alternative paths
+      }
+    }
+  }
+
+  return null;
 }
 
 type AsyncRouteHandler = (
@@ -43,14 +86,31 @@ export function createApp(config: AppConfig): Express {
   // environment before enabling Express 'trust proxy'.
   // Do NOT set trust proxy to true, 1, or 2 without live staging inspection.
   // Accurate per-client IP rate limiting on Render remains dependent on this verification.
+  if (config.trustProxy !== undefined) {
+    app.set("trust proxy", config.trustProxy);
+  } else {
+    app.set("trust proxy", false);
+  }
 
-  // Helmet for standard HTTP security headers
-  app.use(helmet());
+  // Request correlation: X-Request-Id header propagation & req.id assignment
+  app.use(requestIdMiddleware);
+
+  // Helmet for HTTP security headers
+  app.use(
+    helmet({
+      xContentTypeOptions: true,
+      xFrameOptions: { action: "deny" },
+      referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+      hsts: config.isProduction
+        ? { maxAge: 31536000, includeSubDomains: true, preload: true }
+        : false,
+    })
+  );
 
   app.use(
     cors({
       origin: (origin, callback) => {
-        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server, UptimeRobot)
+        // Allow requests with no origin (e.g. mobile apps, curl, server-to-server, UptimeRobot, tests)
         if (!origin) {
           return callback(null, true);
         }
@@ -60,31 +120,31 @@ export function createApp(config: AppConfig): Express {
         return callback(new Error(`CORS blocked: Origin ${origin} not permitted`));
       },
       credentials: true,
-      methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowedHeaders: ["Content-Type", "Authorization"],
+      methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+      allowedHeaders: [
+        "Content-Type",
+        "Authorization",
+        "Idempotency-Key",
+        "X-CSRF-Token",
+        "Origin",
+        "X-Request-Id",
+      ],
+      exposedHeaders: ["X-Request-Id", "Retry-After"],
     })
   );
 
   // Global Rate Limiting (Health checks skipped)
-  const apiLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 200, // limit each IP to 200 requests per windowMs
-    standardHeaders: true,
-    legacyHeaders: false,
-    message: {
-      status: 429,
-      error: "Too many requests, please try again later.",
-    },
-    skip: (req) => {
-      // Crucial requirement: Ensure UptimeRobot and health checks are never rate-limited
-      return req.path.startsWith("/health");
-    },
-  });
+  app.use(globalApiRateLimiter);
 
-  app.use(apiLimiter);
+  // Cookie Parser for HttpOnly refresh tokens and CSRF double-submit cookies
+  app.use(cookieParser());
 
-  // JSON Request Limit (10kb prevents large payload DoS)
+  // JSON & URL-encoded Request Limits (10kb prevents large payload DoS)
   app.use(bodyParser.json({ limit: "10kb" }));
+  app.use(bodyParser.urlencoded({ extended: true, limit: "10kb" }));
+
+  // Global NoSQL query injection sanitizer
+  app.use(noSqlSanitizer);
 
   // ==========================================
   // 2. HEALTH CHECK ENDPOINTS (UPTIMEROBOT)
@@ -155,8 +215,47 @@ export function createApp(config: AppConfig): Express {
   );
 
   // ==========================================
+  // 2.5 API DOCUMENTATION (SWAGGER UI & OPENAPI)
+  // ==========================================
+  const shouldEnableSwagger =
+    config.enableSwagger ??
+    (!config.isProduction || process.env.ENABLE_SWAGGER_UI === "true");
+
+  if (shouldEnableSwagger) {
+    const spec = loadOpenApiSpec();
+    if (spec) {
+      app.get("/docs/openapi.yaml", (_req: Request, res: Response) => {
+        res.setHeader("Content-Type", "text/yaml; charset=utf-8");
+        res.status(200).send(spec.rawYaml);
+      });
+
+      app.get("/docs/openapi.json", (_req: Request, res: Response) => {
+        res.status(200).json(spec.parsed);
+      });
+
+      const swaggerUiOpts: swaggerUi.SwaggerUiOptions = {
+        customSiteTitle: "NIVORA API Documentation",
+      };
+
+      app.use(
+        "/docs",
+        (_req: Request, res: Response, next: NextFunction) => {
+          res.removeHeader("Content-Security-Policy");
+          next();
+        },
+        swaggerUi.serve,
+        swaggerUi.setup(spec.parsed, swaggerUiOpts)
+      );
+    }
+  }
+
+  // ==========================================
   // 3. API ROUTES
   // ==========================================
+  if (config.router) {
+    app.use(config.router);
+  }
+
   app.get("/allHoldings", (_req: Request, res: Response) => {
     res.status(410).json(LEGACY_ENDPOINT_RETIRED_RESPONSE);
   });
@@ -184,34 +283,8 @@ export function createApp(config: AppConfig): Express {
     });
   });
 
-  // Centralized Express Error Handling Middleware (4 arguments required by Express)
-  app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
-    // CORS origin rejection
-    if (err instanceof Error && err.message.startsWith("CORS blocked")) {
-      return res.status(403).json({
-        status: 403,
-        error: err.message,
-      });
-    }
-
-    // Malformed JSON payload from body-parser
-    if (err instanceof SyntaxError && "body" in err) {
-      return res.status(400).json({
-        status: 400,
-        error: "Malformed JSON payload",
-      });
-    }
-
-    const errorMessage = err instanceof Error ? err.message : "Internal Server Error";
-
-    console.error(`[ERROR] ${req.method} ${req.originalUrl}:`, errorMessage);
-
-    return res.status(500).json({
-      status: 500,
-      error: config.isProduction ? "Internal Server Error" : errorMessage,
-    });
-  });
+  // Centralized Express Error Handling Middleware
+  app.use(centralErrorHandler(config.isProduction));
 
   return app;
 }
-

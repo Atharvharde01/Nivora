@@ -6,6 +6,23 @@ import {
   DatabaseConnectionError,
 } from "./src/config/database";
 import { loadEnvConfig, EnvConfig } from "./src/config/env";
+import { BrevoEmailService } from "./src/modules/auth/email.service";
+import { OtpService } from "./src/modules/auth/otp.service";
+import { JwtService } from "./src/modules/auth/jwt.service";
+import { AuthService } from "./src/modules/auth/auth.service";
+import { AuthController } from "./src/modules/auth/auth.controller";
+import { InstrumentQuoteService } from "./src/modules/instruments/instrument-quote.service";
+import { InstrumentController } from "./src/modules/instruments/instrument.controller";
+import { WatchlistService } from "./src/modules/watchlist/watchlist.service";
+import { WatchlistController } from "./src/modules/watchlist/watchlist.controller";
+import { PracticeAccountService } from "./src/modules/practice-accounts/account.service";
+import { OrderExecutionService } from "./src/modules/orders/order-execution.service";
+import { OrderController } from "./src/modules/orders/order.controller";
+import { PortfolioService } from "./src/modules/portfolio/portfolio.service";
+import { PortfolioController } from "./src/modules/portfolio/portfolio.controller";
+import { TradeController } from "./src/modules/trades/trade.controller";
+import { AccountController } from "./src/modules/practice-accounts/account.controller";
+import { createAppRouter } from "./src/routes";
 
 // ==========================================
 // 1. ENVIRONMENT & CONFIGURATION VALIDATION
@@ -22,9 +39,83 @@ try {
   process.exit(1);
 }
 
+const emailService = new BrevoEmailService({
+  apiKey: config.brevoApiKey,
+  senderEmail: config.brevoSenderEmail,
+  senderName: config.brevoSenderName,
+});
+
+const otpService = new OtpService({
+  hmacSecret: config.otpSecret,
+  emailService,
+});
+
+const jwtService = new JwtService({
+  accessSecret: config.jwtAccessSecret,
+  issuer: config.jwtIssuer,
+  audience: config.jwtAudience,
+});
+
+const authService = new AuthService({
+  otpService,
+  jwtService,
+});
+
+const authController = new AuthController({
+  otpService,
+  authService,
+  cookieConfig: { isProduction: config.isProduction },
+  allowedOrigins: config.allowedOrigins,
+});
+
+const instrumentQuoteService = new InstrumentQuoteService();
+const instrumentController = new InstrumentController({
+  quoteService: instrumentQuoteService,
+});
+
+const watchlistService = new WatchlistService({
+  quoteService: instrumentQuoteService,
+});
+const watchlistController = new WatchlistController({
+  watchlistService,
+});
+
+const practiceAccountService = new PracticeAccountService();
+const orderExecutionService = new OrderExecutionService({
+  quoteService: instrumentQuoteService,
+});
+const orderController = new OrderController({
+  orderExecutionService,
+  practiceAccountService,
+});
+
+const portfolioService = new PortfolioService({
+  quoteService: instrumentQuoteService,
+  accountService: practiceAccountService,
+});
+const portfolioController = new PortfolioController({
+  portfolioService,
+});
+const tradeController = new TradeController();
+const accountController = new AccountController({
+  practiceAccountService,
+});
+
+const appRouter = createAppRouter({
+  authDependencies: { authController, jwtService },
+  instrumentController,
+  watchlistController,
+  orderController,
+  portfolioController,
+  tradeController,
+  accountController,
+});
+
 const app = createApp({
   isProduction: config.isProduction,
   allowedOrigins: config.allowedOrigins,
+  router: appRouter,
+  trustProxy: config.trustProxy,
 });
 
 // ==========================================

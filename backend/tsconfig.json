@@ -14,9 +14,7 @@
   },
   "include": [
     "index.ts",
-    "src/**/*.ts",
-    "model/**/*.ts",
-    "schemas/**/*.ts"
+    "src/**/*.ts"
   ],
   "exclude": [
     "node_modules",

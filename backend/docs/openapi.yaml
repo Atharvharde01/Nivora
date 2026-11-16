@@ -1,0 +1,1668 @@
+openapi: 3.1.0
+info:
+  title: NIVORA Stock Trading Simulation Platform API
+  version: 1.0.0
+  description: |
+    Comprehensive REST API documentation for NIVORA virtual paper trading backend.
+    
+    ### Architectural & Financial Invariants
+    - **Integer Paise Arithmetic**: All monetary values (balances, prices, order totals, cost basis, realized and unrealized P&L) are strictly represented in integer paise (₹1.00 = 100 paise; ₹10,00,000 = 100,000,000 paise).
+    - **Authoritative Market Pricing**: Client requests cannot supply execution prices (`CLIENT_PRICE_NOT_ALLOWED`). BUY orders execute strictly at authoritative `askPricePaise`; SELL orders execute strictly at authoritative `bidPricePaise`.
+    - **Zero-Quantity Holding Retention**: Holdings are never deleted upon complete liquidation; documents are retained with quantity 0 to preserve cumulative realized P&L and audit integrity.
+    - **Immutable Cash Ledger**: Every financial transaction writes an append-only cash ledger entry inside the same MongoDB ACID transaction.
+    - **Idempotency**: All state-modifying trading and reset requests require an `Idempotency-Key` header (8-128 chars). Replays return the exact cached result with `wasIdempotentReplay: true`.
+servers:
+  - url: http://localhost:5000
+    description: Local Development Server
+  - url: https://nivora-backend.onrender.com
+    description: Production / Staging Server (Render)
+
+paths:
+  # ==========================================
+  # HEALTH CHECKS
+  # ==========================================
+  /health/live:
+    get:
+      summary: Liveness probe
+      description: Returns 200 OK if the Node.js process is active and running. Excluded from rate limits.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Process is alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "OK"
+                  uptime:
+                    type: number
+                    example: 3600.42
+
+  /health/ready:
+    get:
+      summary: Readiness probe
+      description: Returns 200 OK if MongoDB replica-set ping succeeds. Returns 503 if disconnected.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is ready to serve traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "OK"
+                  database:
+                    type: string
+                    example: "connected"
+        '503':
+          description: Database disconnected
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ERROR"
+                  database:
+                    type: string
+                    example: "disconnected"
+
+  /health:
+    get:
+      summary: UptimeRobot ping probe
+      description: Health monitor probe invoked every 5 minutes.
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Health check passed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "OK"
+                  database:
+                    type: string
+                    example: "connected"
+        '503':
+          description: Health check failed
+
+  # ==========================================
+  # AUTHENTICATION
+  # ==========================================
+  /auth/otp/request:
+    post:
+      summary: Request 6-digit email OTP
+      description: Initiates passwordless authentication by delivering a 6-digit cryptographic OTP to the user's email.
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: trader@nivora.in
+      responses:
+        '200':
+          description: OTP generated and dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "OTP sent to your email address."
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  /auth/otp/verify:
+    post:
+      summary: Verify OTP and establish session
+      description: |
+        Verifies 6-digit OTP. On success, creates user and practice account (if new), issues 15-minute access JWT,
+        and sets HttpOnly refresh token cookie and CSRF cookie.
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - otp
+              properties:
+                email:
+                  type: string
+                  format: email
+                  example: trader@nivora.in
+                otp:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+                  example: "123456"
+      responses:
+        '200':
+          description: Successfully authenticated
+          headers:
+            Set-Cookie:
+              description: Sets HttpOnly refresh token and non-HttpOnly CSRF cookie.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  accessToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+                  user:
+                    $ref: '#/components/schemas/User'
+                  session:
+                    $ref: '#/components/schemas/Session'
+        '400':
+          $ref: '#/components/responses/ErrorResponse'
+        '429':
+          $ref: '#/components/responses/RateLimitError'
+
+  /auth/refresh:
+    post:
+      summary: Refresh access token
+      description: Rotates single-use refresh token cookie and returns fresh 15-minute JWT. Enforces reuse detection.
+      tags:
+        - Authentication
+      security:
+        - cookieAuth: []
+        - csrfHeader: []
+      responses:
+        '200':
+          description: Token refreshed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  accessToken:
+                    type: string
+                    example: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..."
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /auth/logout:
+    post:
+      summary: Logout current session
+      description: Revokes current session and associated refresh token family, and clears authentication cookies.
+      tags:
+        - Authentication
+      security:
+        - cookieAuth: []
+        - csrfHeader: []
+      responses:
+        '200':
+          description: Session terminated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Logged out successfully."
+
+  /auth/me:
+    get:
+      summary: Get current authenticated user
+      description: Returns user profile and active session details.
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Authenticated user details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  user:
+                    $ref: '#/components/schemas/User'
+                  session:
+                    $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/logout-all:
+    post:
+      summary: Logout all sessions
+      description: Revokes all active sessions for authenticated user across all devices.
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: All sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "All sessions have been revoked."
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/sessions:
+    get:
+      summary: List user sessions
+      description: Retrieves all active and inactive sessions for authenticated user.
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User sessions list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      sessions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Session'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/sessions/{sessionId}:
+    delete:
+      summary: Revoke specific session
+      description: Revokes a specific session belonging to authenticated user.
+      tags:
+        - Authentication
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Session revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Session revoked successfully."
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  # ==========================================
+  # INSTRUMENTS & QUOTES
+  # ==========================================
+  /api/v1/instruments:
+    get:
+      summary: Search and list tradable instruments
+      description: Retrieves paginated instruments with optional search string and exchange filters.
+      tags:
+        - Instruments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: search
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+        - name: exchange
+          in: query
+          schema:
+            type: string
+            enum: [NSE, BSE]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Paginated instruments list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Instrument'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+
+  /api/v1/instruments/{instrumentId}:
+    get:
+      summary: Get instrument details
+      description: Returns master record for a specific instrument.
+      tags:
+        - Instruments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: instrumentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Instrument details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      instrument:
+                        $ref: '#/components/schemas/Instrument'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/instruments/{instrumentId}/quote:
+    get:
+      summary: Get real-time simulated quote snapshot
+      description: Returns authoritative bid, ask, and last price in integer paise.
+      tags:
+        - Instruments
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: instrumentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Quote snapshot
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      quote:
+                        $ref: '#/components/schemas/Quote'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==========================================
+  # WATCHLIST
+  # ==========================================
+  /api/v1/watchlist:
+    get:
+      summary: Get user watchlist
+      description: Retrieves authenticated user's watchlist with populated instrument data and quotes.
+      tags:
+        - Watchlist
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Watchlist items
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WatchlistItem'
+                      count:
+                        type: integer
+                        example: 5
+
+  /api/v1/watchlist/items:
+    post:
+      summary: Add instrument to watchlist
+      description: Appends an instrument to user's watchlist. Rejects duplicates with 409 WATCHLIST_ITEM_ALREADY_EXISTS.
+      tags:
+        - Watchlist
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - instrumentId
+              properties:
+                instrumentId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '201':
+          description: Instrument added to watchlist
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      item:
+                        $ref: '#/components/schemas/WatchlistItem'
+        '409':
+          description: Instrument already in watchlist
+
+  /api/v1/watchlist/items/{instrumentId}:
+    delete:
+      summary: Remove instrument from watchlist
+      description: Removes an instrument from user's watchlist and shifts subsequent item display orders.
+      tags:
+        - Watchlist
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: instrumentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Item removed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      removed:
+                        type: boolean
+                        example: true
+
+  /api/v1/watchlist/reorder:
+    patch:
+      summary: Reorder watchlist items
+      description: Updates display order sequence of instruments in authenticated user's watchlist.
+      tags:
+        - Watchlist
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - instrumentIds
+              properties:
+                instrumentIds:
+                  type: array
+                  items:
+                    type: string
+                    pattern: '^[0-9a-fA-F]{24}$'
+                  minItems: 1
+                  maxItems: 50
+      responses:
+        '200':
+          description: Reordering updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/WatchlistItem'
+                      count:
+                        type: integer
+                        example: 2
+
+  # ==========================================
+  # TRADING & ORDERS
+  # ==========================================
+  /api/v1/orders:
+    post:
+      summary: Execute simulated market order
+      description: |
+        Executes a simulated market BUY or SELL order atomically in a MongoDB transaction.
+        - BUY orders execute strictly at authoritative ask price and debit cash balance.
+        - SELL orders execute strictly at authoritative bid price, credit cash balance, and calculate realized P&L.
+        - Requires `Idempotency-Key` header (8-128 chars). Replay returns HTTP 200 with wasIdempotentReplay: true.
+        - Client-supplied price parameters return 400 CLIENT_PRICE_NOT_ALLOWED.
+      tags:
+        - Trading
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_\-:.]{8,128}$'
+            example: "buy-rel-ord-20261111-001"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - instrumentId
+                - side
+                - quantity
+              properties:
+                instrumentId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{24}$'
+                side:
+                  type: string
+                  enum: [BUY, SELL]
+                quantity:
+                  type: integer
+                  minimum: 1
+                  maximum: 1000000
+                practiceAccountId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{24}$'
+                  description: Optional. Defaults to user's currently active practice account.
+      responses:
+        '201':
+          description: Order executed or terminal rejection persisted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      order:
+                        $ref: '#/components/schemas/Order'
+                      trade:
+                        $ref: '#/components/schemas/Trade'
+                      status:
+                        type: string
+                        enum: [EXECUTED, REJECTED]
+                      wasIdempotentReplay:
+                        type: boolean
+                        example: false
+        '200':
+          description: Idempotent replay of previously executed or rejected order
+        '400':
+          description: Validation error or client price injection attempted
+        '409':
+          description: Idempotency key conflict (different payload)
+
+    get:
+      summary: List user orders
+      description: Retrieves paginated order history strictly scoped to authenticated user.
+      tags:
+        - Trading
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: practiceAccountId
+          in: query
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: instrumentId
+          in: query
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: side
+          in: query
+          schema:
+            type: string
+            enum: [BUY, SELL]
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, EXECUTED, REJECTED]
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+      responses:
+        '200':
+          description: Orders list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Order'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+
+  /api/v1/orders/{orderId}:
+    get:
+      summary: Get order by ID
+      description: Retrieves a specific order. Enforces strict multi-tenant ownership (returns 403 on IDOR attempts).
+      tags:
+        - Trading
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: orderId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Order details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      order:
+                        $ref: '#/components/schemas/Order'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==========================================
+  # TRADES & PORTFOLIO
+  # ==========================================
+  /api/v1/trades:
+    get:
+      summary: List trade executions
+      description: Retrieves paginated immutable trade execution history including quote snapshots and realized P&L.
+      tags:
+        - Portfolio
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: practiceAccountId
+          in: query
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Trades list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Trade'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+
+  /api/v1/trades/{tradeId}:
+    get:
+      summary: Get trade by ID
+      description: Retrieves specific trade execution record. Enforces strict multi-tenant authorization.
+      tags:
+        - Portfolio
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: tradeId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Trade details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      trade:
+                        $ref: '#/components/schemas/Trade'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/portfolio:
+    get:
+      summary: Get portfolio valuation and positions
+      description: Returns aggregated portfolio summary, cash balance, current market value, unrealized P&L, realized P&L, and open positions.
+      tags:
+        - Portfolio
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: practiceAccountId
+          in: query
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Portfolio summary and positions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      practiceAccountId:
+                        type: string
+                      summary:
+                        $ref: '#/components/schemas/PortfolioSummary'
+                      positions:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/PortfolioPosition'
+
+  # ==========================================
+  # ACCOUNTS & CASH LEDGER
+  # ==========================================
+  /api/v1/accounts/active:
+    get:
+      summary: Get active practice account
+      description: Returns currently active practice account with cash balance in integer paise.
+      tags:
+        - Accounts
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Active practice account
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      account:
+                        $ref: '#/components/schemas/PracticeAccount'
+
+  /api/v1/accounts/{accountId}:
+    get:
+      summary: Get practice account by ID
+      description: Returns practice account details. Enforces multi-tenant ownership check (403 on IDOR attempt).
+      tags:
+        - Accounts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+      responses:
+        '200':
+          description: Practice account details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      account:
+                        $ref: '#/components/schemas/PracticeAccount'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/accounts/{accountId}/ledger:
+    get:
+      summary: Get immutable cash ledger history
+      description: Returns paginated append-only cash ledger movements for a practice account.
+      tags:
+        - Accounts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: accountId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: entryType
+          in: query
+          schema:
+            type: string
+            enum: [INITIAL_FUNDING, BUY_EXECUTION, SELL_EXECUTION, TRADE_REVERSAL, ADJUSTMENT]
+        - name: direction
+          in: query
+          schema:
+            type: string
+            enum: [CREDIT, DEBIT]
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        '200':
+          description: Paginated ledger movements
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/LedgerEntry'
+                      pagination:
+                        $ref: '#/components/schemas/Pagination'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+
+  /api/v1/accounts/reset:
+    post:
+      summary: Reset practice account
+      description: |
+        Atomically archives the current practice account, provisions account #(N+1) funded with 100,000,000 paise (₹10,00,000),
+        and creates an INITIAL_FUNDING cash ledger entry inside a single MongoDB transaction.
+        Enforces explicit confirmation string and expected active account ID to prevent race conditions. Preserves watchlists.
+      tags:
+        - Accounts
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-zA-Z0-9_\-:.]{8,128}$'
+            example: "reset-key-20261111-01"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - confirmation
+                - expectedActiveAccountId
+              properties:
+                confirmation:
+                  type: string
+                  enum: [RESET_PRACTICE_ACCOUNT]
+                  example: "RESET_PRACTICE_ACCOUNT"
+                expectedActiveAccountId:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{24}$'
+                  example: "65e5b3f23a1c2d0012345678"
+      responses:
+        '201':
+          description: Practice account reset successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      archivedAccount:
+                        $ref: '#/components/schemas/PracticeAccount'
+                      activeAccount:
+                        $ref: '#/components/schemas/PracticeAccount'
+                      initialFundingLedgerEntry:
+                        $ref: '#/components/schemas/LedgerEntry'
+                      wasIdempotentReplay:
+                        type: boolean
+                        example: false
+        '400':
+          description: Missing confirmation or invalid confirmation string
+        '409':
+          description: expectedActiveAccountId does not match currently active account (STALE_ACCOUNT_ID)
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Access JWT token with 15-minute validity passed in Authorization header.
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: __Host-refresh_token
+      description: HttpOnly, Path=/, Secure refresh token cookie.
+    csrfHeader:
+      type: apiKey
+      in: header
+      name: X-CSRF-Token
+      description: Session-bound cryptographic CSRF token matching non-HttpOnly csrf_token cookie.
+
+  schemas:
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "65e5b3f23a1c2d0012345678"
+        email:
+          type: string
+          format: email
+          example: "trader@nivora.in"
+        displayName:
+          type: string
+          example: "Nivora Trader"
+        status:
+          type: string
+          enum: [ACTIVE, SUSPENDED]
+          example: "ACTIVE"
+        onboardingCompleted:
+          type: boolean
+          example: true
+        createdAt:
+          type: string
+          format: date-time
+
+    Session:
+      type: object
+      properties:
+        id:
+          type: string
+          example: "65e5b3f23a1c2d0012345679"
+        status:
+          type: string
+          enum: [ACTIVE, REVOKED, EXPIRED]
+          example: "ACTIVE"
+        lastActiveAt:
+          type: string
+          format: date-time
+        idleExpiresAt:
+          type: string
+          format: date-time
+        absoluteExpiresAt:
+          type: string
+          format: date-time
+
+    Instrument:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "65e5b3f23a1c2d001234567a"
+        symbol:
+          type: string
+          example: "RELIANCE"
+        name:
+          type: string
+          example: "Reliance Industries Limited"
+        exchange:
+          type: string
+          enum: [NSE, BSE]
+          example: "NSE"
+        segment:
+          type: string
+          example: "EQUITY"
+        lotSize:
+          type: integer
+          example: 1
+        tickSizePaise:
+          type: integer
+          example: 5
+        isTradable:
+          type: boolean
+          example: true
+        lastPricePaise:
+          type: integer
+          example: 250000
+
+    Quote:
+      type: object
+      properties:
+        instrumentId:
+          type: string
+          example: "65e5b3f23a1c2d001234567a"
+        symbol:
+          type: string
+          example: "RELIANCE"
+        exchange:
+          type: string
+          example: "NSE"
+        bidPricePaise:
+          type: integer
+          description: Authoritative bid price in integer paise.
+          example: 249950
+        askPricePaise:
+          type: integer
+          description: Authoritative ask price in integer paise.
+          example: 250050
+        lastPricePaise:
+          type: integer
+          example: 250000
+        timestamp:
+          type: string
+          format: date-time
+
+    WatchlistItem:
+      type: object
+      properties:
+        _id:
+          type: string
+        instrumentId:
+          type: string
+        symbol:
+          type: string
+        exchange:
+          type: string
+        displayOrder:
+          type: integer
+        quote:
+          $ref: '#/components/schemas/Quote'
+
+    Order:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "65e5b3f23a1c2d001234567b"
+        userId:
+          type: string
+        practiceAccountId:
+          type: string
+        instrumentId:
+          type: string
+        side:
+          type: string
+          enum: [BUY, SELL]
+        orderType:
+          type: string
+          enum: [MARKET]
+        status:
+          type: string
+          enum: [PENDING, EXECUTED, REJECTED]
+        requestedQuantity:
+          type: integer
+          example: 10
+        executedQuantity:
+          type: integer
+          example: 10
+        executionPricePaise:
+          type: integer
+          example: 250050
+        totalValuePaise:
+          type: integer
+          example: 2500500
+        rejectionCode:
+          type: string
+          nullable: true
+          example: null
+        rejectionReason:
+          type: string
+          nullable: true
+        idempotencyKey:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    Trade:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "65e5b3f23a1c2d001234567c"
+        orderId:
+          type: string
+        userId:
+          type: string
+        practiceAccountId:
+          type: string
+        instrumentId:
+          type: string
+        side:
+          type: string
+          enum: [BUY, SELL]
+        quantity:
+          type: integer
+          example: 10
+        executionPricePaise:
+          type: integer
+          example: 250050
+        totalValuePaise:
+          type: integer
+          example: 2500500
+        realizedPnLPaise:
+          type: integer
+          example: 0
+        costBasisSoldPaise:
+          type: integer
+          example: 0
+        quoteSnapshot:
+          $ref: '#/components/schemas/Quote'
+        createdAt:
+          type: string
+          format: date-time
+
+    Holding:
+      type: object
+      properties:
+        _id:
+          type: string
+        userId:
+          type: string
+        practiceAccountId:
+          type: string
+        instrumentId:
+          type: string
+        symbol:
+          type: string
+        exchange:
+          type: string
+        quantity:
+          type: integer
+          description: Current share count. Retained at 0 on complete liquidation.
+          example: 10
+        averageBuyPricePaise:
+          type: integer
+          example: 250050
+        totalInvestedPaise:
+          type: integer
+          example: 2500500
+        realizedPnlPaise:
+          type: integer
+          example: 0
+        version:
+          type: integer
+          example: 1
+
+    PortfolioPosition:
+      type: object
+      properties:
+        instrumentId:
+          type: string
+        symbol:
+          type: string
+        exchange:
+          type: string
+        quantity:
+          type: integer
+          example: 10
+        averageBuyPricePaise:
+          type: integer
+          example: 250050
+        totalInvestedPaise:
+          type: integer
+          example: 2500500
+        currentMarketValuePaise:
+          type: integer
+          example: 2499500
+        unrealizedPnlPaise:
+          type: integer
+          example: -1000
+        realizedPnlPaise:
+          type: integer
+          example: 0
+
+    PortfolioSummary:
+      type: object
+      properties:
+        practiceAccountId:
+          type: string
+        accountNumber:
+          type: integer
+          example: 1
+        cashBalancePaise:
+          type: integer
+          example: 97499500
+        totalInvestedPaise:
+          type: integer
+          example: 2500500
+        currentMarketValuePaise:
+          type: integer
+          example: 2499500
+        unrealizedPnlPaise:
+          type: integer
+          example: -1000
+        realizedPnlPaise:
+          type: integer
+          example: 0
+        totalPnlPaise:
+          type: integer
+          example: -1000
+        activePositionsCount:
+          type: integer
+          example: 1
+        hasStaleQuotes:
+          type: boolean
+          example: false
+
+    PracticeAccount:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "65e5b3f23a1c2d001234567d"
+        userId:
+          type: string
+        accountNumber:
+          type: integer
+          example: 1
+        status:
+          type: string
+          enum: [ACTIVE, ARCHIVED]
+          example: "ACTIVE"
+        initialBalancePaise:
+          type: integer
+          example: 100000000
+        cashBalancePaise:
+          type: integer
+          example: 100000000
+        version:
+          type: integer
+          example: 1
+        createdAt:
+          type: string
+          format: date-time
+
+    LedgerEntry:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "65e5b3f23a1c2d001234567e"
+        userId:
+          type: string
+        practiceAccountId:
+          type: string
+        entryType:
+          type: string
+          enum: [INITIAL_FUNDING, BUY_EXECUTION, SELL_EXECUTION, TRADE_REVERSAL, ADJUSTMENT]
+          example: "INITIAL_FUNDING"
+        direction:
+          type: string
+          enum: [CREDIT, DEBIT]
+          example: "CREDIT"
+        amountPaise:
+          type: integer
+          example: 100000000
+        balanceBeforePaise:
+          type: integer
+          example: 0
+        balanceAfterPaise:
+          type: integer
+          example: 100000000
+        referenceType:
+          type: string
+          enum: [PRACTICE_ACCOUNT, TRADE, ADJUSTMENT]
+          example: "PRACTICE_ACCOUNT"
+        referenceId:
+          type: string
+        idempotencyKey:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        total:
+          type: integer
+          example: 45
+        totalPages:
+          type: integer
+          example: 3
+
+  responses:
+    ErrorResponse:
+      description: Centralized error response envelope
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "VALIDATION_ERROR"
+                  message:
+                    type: string
+                    example: "Invalid request payload."
+                  details:
+                    type: array
+                    items:
+                      type: object
+
+    ValidationError:
+      description: Request payload failed schema validation
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "VALIDATION_ERROR"
+                  message:
+                    type: string
+                    example: "Request validation failed."
+                  details:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        field:
+                          type: string
+                          example: "email"
+                        message:
+                          type: string
+                          example: "Invalid email address."
+
+    UnauthorizedError:
+      description: Authentication required or invalid/expired token
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "UNAUTHORIZED"
+                  message:
+                    type: string
+                    example: "Authentication required."
+
+    ForbiddenError:
+      description: Authorization failed or resource ownership violation (IDOR prevented)
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "ACCOUNT_OWNERSHIP_VIOLATION"
+                  message:
+                    type: string
+                    example: "User is not authorized to access this resource."
+
+    NotFoundError:
+      description: Requested resource was not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "NOT_FOUND"
+                  message:
+                    type: string
+                    example: "Resource not found."
+
+    RateLimitError:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          description: Seconds until quota window resets
+          schema:
+            type: integer
+            example: 60
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              success:
+                type: boolean
+                example: false
+              error:
+                type: object
+                properties:
+                  code:
+                    type: string
+                    example: "RATE_LIMIT_EXCEEDED"
+                  message:
+                    type: string
+                    example: "Too many requests. Please try again later."
