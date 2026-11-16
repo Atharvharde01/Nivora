@@ -12,7 +12,8 @@
     "test:all": "tsx --test src/shared/finance/financial.utils.test.ts src/modules/instruments/instrument-quote.service.test.ts src/modules/practice-accounts/account.service.test.ts src/modules/portfolio/portfolio.service.test.ts src/modules/orders/order-execution.service.test.ts src/modules/auth/otp.service.test.ts src/modules/auth/jwt.service.test.ts src/modules/auth/csrf-cookie.test.ts src/modules/watchlist/watchlist.service.test.ts src/shared/validation/validation.middleware.test.ts src/test/unit/**/*.test.ts src/test/integration/**/*.integration.test.ts",
     "test": "npm run test:all",
     "smoke-test": "tsx scripts/smoke-test.ts",
-    "db:init": "tsx scripts/db-init.ts"
+    "db:init": "tsx scripts/db-init.ts",
+    "db:seed:instruments": "tsx scripts/seed-instruments.ts"
   },
   "author": "",
   "license": "ISC",
