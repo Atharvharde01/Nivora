@@ -22,6 +22,9 @@ import { PortfolioService } from "./src/modules/portfolio/portfolio.service";
 import { PortfolioController } from "./src/modules/portfolio/portfolio.controller";
 import { TradeController } from "./src/modules/trades/trade.controller";
 import { AccountController } from "./src/modules/practice-accounts/account.controller";
+import { MarketSimulationEngine } from "./src/modules/market-simulation/market-simulation.engine";
+import { MarketSimulationService } from "./src/modules/market-simulation/market-simulation.service";
+import { MarketSimulationScheduler } from "./src/modules/market-simulation/market-simulation.scheduler";
 import { createAppRouter } from "./src/routes";
 
 // ==========================================
@@ -101,6 +104,24 @@ const accountController = new AccountController({
   practiceAccountService,
 });
 
+const marketSimulationEngine = new MarketSimulationEngine({
+  config: {
+    maxMoveBps: config.marketSimulationMaxMoveBps ?? 75,
+  },
+});
+const marketSimulationService = new MarketSimulationService({
+  engine: marketSimulationEngine,
+});
+const marketSimulationScheduler = new MarketSimulationScheduler({
+  service: marketSimulationService,
+  enabled: config.marketSimulationEnabled ?? false,
+  intervalMs: config.marketSimulationIntervalMs ?? 5_000,
+  onTickError: (err) => {
+    const msg = err instanceof Error ? err.message : "Unknown tick error";
+    console.error(`[MarketSimulation] Tick execution error: ${msg}`);
+  },
+});
+
 const appRouter = createAppRouter({
   authDependencies: { authController, jwtService },
   instrumentController,
@@ -132,6 +153,15 @@ async function startServer(): Promise<void> {
 
     server = app.listen(config.port, () => {
       console.log(`Server listening on port ${config.port} [${config.nodeEnv}]`);
+      if (marketSimulationScheduler.start()) {
+        console.log(
+          `Market simulation scheduler started [interval=${
+            config.marketSimulationIntervalMs ?? 5_000
+          }ms, maxMoveBps=${config.marketSimulationMaxMoveBps ?? 75}].`
+        );
+      } else {
+        console.log("Market simulation scheduler is disabled.");
+      }
     });
   } catch (err: unknown) {
     const category =
@@ -148,6 +178,13 @@ async function gracefulShutdown(signal: string): Promise<void> {
   }
   isShuttingDown = true;
   console.log(`Received ${signal}. Starting graceful shutdown...`);
+
+  try {
+    await marketSimulationScheduler.stop();
+    console.log("Market simulation scheduler stopped cleanly.");
+  } catch {
+    console.error("Error stopping market simulation scheduler during shutdown.");
+  }
 
   if (server) {
     server.close(async (err) => {
