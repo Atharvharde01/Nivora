@@ -5,6 +5,7 @@
  * authenticated user's watchlist with 5-tab client-side pagination (10 items/page, max 50),
  * add/remove actions, and full-list reordering.
  * Strictly avoids fabricated mock prices or fake 0.00% fallbacks.
+ * Hardened with global mutation locks, rollback guards, and auth-lifecycle isolation.
  */
 
 import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
@@ -43,9 +44,10 @@ export const MAX_WATCHLIST_CAPACITY = 50;
 
 const getErrorMessage = (error: unknown, fallback: string): string => {
   if (!error) return fallback;
-  if (typeof error === "string") return error;
+  if (typeof error === "string" && error.trim()) return error;
   if (typeof error === "object" && error !== null && "message" in error) {
-    return String((error as { message: unknown }).message || fallback);
+    const msg = (error as { message: unknown }).message;
+    if (typeof msg === "string" && msg.trim()) return msg;
   }
   return fallback;
 };
@@ -55,6 +57,44 @@ const getErrorCode = (error: unknown): string | undefined => {
     return String((error as { code: unknown }).code);
   }
   return undefined;
+};
+
+interface QuoteDisplayMetrics {
+  hasPrice: boolean;
+  priceRupees: number | null;
+  prevCloseRupees: number | null;
+  diff: number | null;
+  pct: number | null;
+}
+
+/**
+ * Calculates price and percentage change strictly without fabricating fallbacks.
+ * If previous close is missing or zero, percentage change is null (displayed as '—').
+ */
+const computeQuoteMetrics = (
+  lastPricePaise?: number,
+  previousClosePaise?: number
+): QuoteDisplayMetrics => {
+  const hasPrice = lastPricePaise !== undefined && lastPricePaise > 0;
+  const priceRupees = hasPrice ? paiseToRupees(lastPricePaise!) : null;
+
+  const hasPrevClose =
+    previousClosePaise !== undefined && previousClosePaise > 0;
+  const prevCloseRupees = hasPrevClose
+    ? paiseToRupees(previousClosePaise!)
+    : null;
+
+  const diff =
+    priceRupees !== null && prevCloseRupees !== null
+      ? priceRupees - prevCloseRupees
+      : null;
+
+  const pct =
+    diff !== null && prevCloseRupees !== null && prevCloseRupees > 0
+      ? (diff / prevCloseRupees) * 100
+      : null;
+
+  return { hasPrice, priceRupees, prevCloseRupees, diff, pct };
 };
 
 export const WatchList: React.FC = () => {
@@ -70,7 +110,7 @@ export const WatchList: React.FC = () => {
     openBuyWindow,
     openSellWindow,
   } = useMarket();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token } = useAuth();
 
   // Search state
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -81,7 +121,11 @@ export const WatchList: React.FC = () => {
   // Watchlist & pagination state
   const [remoteWatchlist, setRemoteWatchlist] = useState<WatchlistItemDto[]>([]);
   const [activeTab, setActiveTab] = useState<number>(1);
-  const [mutatingItemId, setMutatingItemId] = useState<string | null>(null);
+
+  // Concurrency & mutation locking
+  const isMutatingRef = useRef<boolean>(false);
+  const [isMutating, setIsMutating] = useState<boolean>(false);
+
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     message: string;
@@ -89,6 +133,16 @@ export const WatchList: React.FC = () => {
 
   const searchAbortControllerRef = useRef<AbortController | null>(null);
   const searchRequestIdRef = useRef<number>(0);
+  const watchlistRequestIdRef = useRef<number>(0);
+  const isMountedRef = useRef<boolean>(true);
+
+  // Track component mount status
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
 
   // Auto-dismiss feedback banner after 4 seconds
   useEffect(() => {
@@ -99,27 +153,48 @@ export const WatchList: React.FC = () => {
     return () => clearTimeout(timer);
   }, [feedback]);
 
-  // Fetch user's real watchlist from backend
+  // Fetch user's real watchlist from backend with stale-response protection across auth changes
   const fetchWatchlist = useCallback(async () => {
-    if (!isAuthenticated) {
+    const currentReqId = ++watchlistRequestIdRef.current;
+
+    if (!isAuthenticated || !token) {
       setRemoteWatchlist([]);
       return;
     }
+
     try {
       const res = await WatchlistApi.getWatchlist();
-      if (res.success && res.data?.items) {
+      if (
+        isMountedRef.current &&
+        currentReqId === watchlistRequestIdRef.current &&
+        res.success &&
+        res.data?.items
+      ) {
         setRemoteWatchlist(res.data.items);
       }
     } catch {
-      // Keep previous valid items during transient errors
+      // Keep previous valid items during transient errors for the same authenticated session
     }
-  }, [isAuthenticated]);
+  }, [isAuthenticated, token]);
 
   useEffect(() => {
     fetchWatchlist();
   }, [fetchWatchlist]);
 
-  // Handle live instrument search with debouncing (250ms), signal cancellation, and stale protection
+  // Handle clearing search query and invalidating pending requests
+  const handleClearSearch = useCallback(() => {
+    if (searchAbortControllerRef.current) {
+      searchAbortControllerRef.current.abort();
+      searchAbortControllerRef.current = null;
+    }
+    searchRequestIdRef.current++;
+    setSearchQuery("");
+    setSearchResults([]);
+    setSearchError(null);
+    setIsSearching(false);
+  }, []);
+
+  // Handle live instrument search with debouncing (250ms), signal cancellation, and explicit error handling
   useEffect(() => {
     const trimmed = searchQuery.trim();
     if (!trimmed) {
@@ -127,6 +202,7 @@ export const WatchList: React.FC = () => {
         searchAbortControllerRef.current.abort();
         searchAbortControllerRef.current = null;
       }
+      searchRequestIdRef.current++;
       setSearchResults([]);
       setSearchError(null);
       setIsSearching(false);
@@ -149,16 +225,25 @@ export const WatchList: React.FC = () => {
           { search: trimmed, isTradable: true, page: 1, limit: 15 },
           { signal: controller.signal }
         );
-        if (currentReqId === searchRequestIdRef.current && res.success && res.data?.items) {
-          setSearchResults(res.data.items);
-          setSearchError(null);
+        if (currentReqId === searchRequestIdRef.current) {
+          if (res.success && res.data?.items) {
+            setSearchResults(res.data.items);
+            setSearchError(null);
+          } else {
+            setSearchResults([]);
+            setSearchError(
+              getErrorMessage(res.error, "Search failed. Please try again.")
+            );
+          }
         }
       } catch (err: unknown) {
         if (controller.signal.aborted || currentReqId !== searchRequestIdRef.current) {
           return; // Ignore stale or aborted requests
         }
         setSearchResults([]);
-        setSearchError(err instanceof Error ? err.message : "Search failed");
+        setSearchError(
+          err instanceof Error && err.message ? err.message : "Search failed. Please try again."
+        );
       } finally {
         if (currentReqId === searchRequestIdRef.current) {
           setIsSearching(false);
@@ -204,28 +289,33 @@ export const WatchList: React.FC = () => {
     });
   };
 
-  // Add instrument to watchlist
+  // Add instrument to watchlist with global mutation lock
   const handleAddToWatchlist = async (item: InstrumentSummary) => {
     if (!isAuthenticated) {
       setFeedback({ type: "error", message: "Please sign in to manage your watchlist." });
       return;
     }
 
-    if (remoteWatchlist.some((w) => w.instrumentId === item._id)) {
-      setFeedback({ type: "error", message: "Instrument is already in your watchlist." });
-      return;
+    if (isMutatingRef.current) {
+      return; // Prevent duplicate or concurrent submissions
     }
+    isMutatingRef.current = true;
+    setIsMutating(true);
 
-    if (remoteWatchlist.length >= MAX_WATCHLIST_CAPACITY) {
-      setFeedback({
-        type: "error",
-        message: "Watchlist is full (max 50 instruments).",
-      });
-      return;
-    }
-
-    setMutatingItemId(item._id);
     try {
+      if (remoteWatchlist.some((w) => w.instrumentId === item._id)) {
+        setFeedback({ type: "error", message: "Instrument is already in your watchlist." });
+        return;
+      }
+
+      if (remoteWatchlist.length >= MAX_WATCHLIST_CAPACITY) {
+        setFeedback({
+          type: "error",
+          message: "Watchlist is full (max 50 instruments).",
+        });
+        return;
+      }
+
       const res = await WatchlistApi.addItem(item._id);
       if (res.success && res.data?.item) {
         const newItem = res.data.item;
@@ -258,15 +348,21 @@ export const WatchList: React.FC = () => {
         message: err instanceof Error ? err.message : "Failed to add instrument to watchlist.",
       });
     } finally {
-      setMutatingItemId(null);
+      isMutatingRef.current = false;
+      setIsMutating(false);
     }
   };
 
-  // Remove instrument from watchlist (preserves workspace selected instrument!)
+  // Remove instrument from watchlist with global mutation lock (preserves workspace selection)
   const handleRemoveFromWatchlist = async (instrumentId: string, symbol: string) => {
     if (!isAuthenticated) return;
 
-    setMutatingItemId(instrumentId);
+    if (isMutatingRef.current) {
+      return; // Prevent concurrent mutations
+    }
+    isMutatingRef.current = true;
+    setIsMutating(true);
+
     try {
       const res = await WatchlistApi.removeItem(instrumentId);
       if (res.success) {
@@ -295,11 +391,12 @@ export const WatchList: React.FC = () => {
         message: err instanceof Error ? err.message : "Failed to remove instrument from watchlist.",
       });
     } finally {
-      setMutatingItemId(null);
+      isMutatingRef.current = false;
+      setIsMutating(false);
     }
   };
 
-  // Reorder watchlist (sends complete ordered array of all instrument IDs)
+  // Reorder watchlist (sends complete ordered array of all instrument IDs with page rollback guard)
   const handleReorder = async (fromFullIndex: number, toFullIndex: number) => {
     if (
       !isAuthenticated ||
@@ -313,7 +410,15 @@ export const WatchList: React.FC = () => {
       return;
     }
 
+    if (isMutatingRef.current) {
+      return; // Block concurrent mutations while reordering is in progress
+    }
+    isMutatingRef.current = true;
+    setIsMutating(true);
+
     const previousList = [...remoteWatchlist];
+    const previousPage = activeTab;
+
     const reorderedList = [...remoteWatchlist];
     const [moved] = reorderedList.splice(fromFullIndex, 1);
     reorderedList.splice(toFullIndex, 0, moved);
@@ -324,30 +429,41 @@ export const WatchList: React.FC = () => {
       setActiveTab(targetPage);
     }
 
-    // Optimistically update
+    // Optimistically update list
     setRemoteWatchlist(reorderedList);
-    setMutatingItemId(moved.instrumentId);
 
     try {
       const instrumentIds = reorderedList.map((i) => i.instrumentId);
       const res = await WatchlistApi.reorder(instrumentIds);
-      if (!res.success) {
-        // Rollback on API error
+      if (res.success) {
+        // Sync with backend items if valid
+        if (
+          res.data?.items &&
+          Array.isArray(res.data.items) &&
+          res.data.items.length === reorderedList.length
+        ) {
+          setRemoteWatchlist(res.data.items);
+        }
+      } else {
+        // Rollback both watchlist and active page
         setRemoteWatchlist(previousList);
+        setActiveTab(previousPage);
         setFeedback({
           type: "error",
           message: getErrorMessage(res.error, "Failed to reorder watchlist."),
         });
       }
     } catch {
-      // Rollback on network exception
+      // Rollback both watchlist and active page on exception
       setRemoteWatchlist(previousList);
+      setActiveTab(previousPage);
       setFeedback({
         type: "error",
         message: "Failed to reorder watchlist.",
       });
     } finally {
-      setMutatingItemId(null);
+      isMutatingRef.current = false;
+      setIsMutating(false);
     }
   };
 
@@ -533,7 +649,7 @@ export const WatchList: React.FC = () => {
             <button
               type="button"
               className="clear-search-btn"
-              onClick={() => setSearchQuery("")}
+              onClick={handleClearSearch}
               title="Clear search"
               aria-label="Clear search"
             >
@@ -553,7 +669,7 @@ export const WatchList: React.FC = () => {
               <button
                 type="button"
                 className="search-panel-close-btn"
-                onClick={() => setSearchQuery("")}
+                onClick={handleClearSearch}
                 title="Close search results"
                 aria-label="Close search results"
               >
@@ -578,7 +694,7 @@ export const WatchList: React.FC = () => {
               </div>
             )}
 
-            {!isSearching && searchResults.length > 0 && (
+            {!isSearching && !searchError && searchResults.length > 0 && (
               <ul className="search-results-list">
                 {searchResults.map((item) => {
                   const isAdded = remoteWatchlist.some(
@@ -586,21 +702,11 @@ export const WatchList: React.FC = () => {
                   );
                   const isCurrentSelection =
                     selectedInstrument.symbol === item.symbol;
-                  const hasPrice =
-                    item.lastPricePaise !== undefined && item.lastPricePaise > 0;
-                  const priceRupees = hasPrice ? paiseToRupees(item.lastPricePaise) : null;
-                  const prevRupees =
-                    item.previousClosePaise && item.previousClosePaise > 0
-                      ? paiseToRupees(item.previousClosePaise)
-                      : priceRupees;
-                  const diff =
-                    priceRupees !== null && prevRupees !== null
-                      ? priceRupees - prevRupees
-                      : null;
-                  const pct =
-                    diff !== null && prevRupees && prevRupees > 0
-                      ? (diff / prevRupees) * 100
-                      : null;
+
+                  const { hasPrice, priceRupees, pct } = computeQuoteMetrics(
+                    item.lastPricePaise,
+                    item.previousClosePaise
+                  );
 
                   return (
                     <li
@@ -682,7 +788,7 @@ export const WatchList: React.FC = () => {
                           <button
                             type="button"
                             className="btn-add-watchlist"
-                            disabled={mutatingItemId === item._id}
+                            disabled={isMutating}
                             onClick={() => handleAddToWatchlist(item)}
                             title="Add to watchlist"
                             aria-label={`Add ${item.symbol} to watchlist`}
@@ -735,26 +841,17 @@ export const WatchList: React.FC = () => {
               const fullIndex = pageStartIndex + indexOnPage;
               const isSelected = selectedInstrument.symbol === item.symbol;
               const quote = item.quote;
-              const hasQuote = quote !== null && quote !== undefined && quote.lastPricePaise > 0;
-              const priceRupees = hasQuote ? paiseToRupees(quote.lastPricePaise) : null;
-              const prevRupees =
-                quote && quote.previousClosePaise > 0
-                  ? paiseToRupees(quote.previousClosePaise)
-                  : priceRupees;
 
-              const diff =
-                priceRupees !== null && prevRupees !== null ? priceRupees - prevRupees : null;
-              const pct =
-                diff !== null && prevRupees && prevRupees > 0
-                  ? (diff / prevRupees) * 100
-                  : null;
+              const { hasPrice, priceRupees, diff, pct } = computeQuoteMetrics(
+                quote?.lastPricePaise,
+                quote?.previousClosePaise
+              );
 
               const isUp = diff !== null && diff > 0;
               const isDown = diff !== null && diff < 0;
 
               const isFirst = fullIndex === 0;
               const isLast = fullIndex === remoteWatchlist.length - 1;
-              const isMutating = mutatingItemId === item.instrumentId;
 
               return (
                 <li
@@ -774,6 +871,13 @@ export const WatchList: React.FC = () => {
                     <div className="item-symbol-group">
                       <span className="item-symbol">{item.symbol}</span>
                       <span className="item-exchange">{item.exchange}</span>
+                      {quote?.isStale && (
+                        <Tooltip title="Market quote is stale" arrow>
+                          <span className="badge-stale" aria-label="Stale quote">
+                            STALE
+                          </span>
+                        </Tooltip>
+                      )}
                     </div>
 
                     <div className="item-price-group">
@@ -797,7 +901,7 @@ export const WatchList: React.FC = () => {
                       )}
 
                       <span className="item-price">
-                        {hasQuote ? `₹${formatRupees(priceRupees!)}` : "—"}
+                        {hasPrice ? `₹${formatRupees(priceRupees!)}` : "—"}
                       </span>
                     </div>
                   </div>

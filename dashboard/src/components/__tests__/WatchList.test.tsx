@@ -106,7 +106,13 @@ const SelectedTester: React.FC = () => {
 
 const AuthTrigger: React.FC = () => {
   const { setToken } = useAuth();
-  return <button onClick={() => setToken("jwt-token")}>Login</button>;
+  return (
+    <div>
+      <button onClick={() => setToken("jwt-token")}>Login</button>
+      <button onClick={() => setToken("jwt-token-b")}>Login B</button>
+      <button onClick={() => setToken(null)}>Logout</button>
+    </div>
+  );
 };
 
 const renderWithProviders = (watchlistItems: WatchlistItemDto[] = []) => {
@@ -147,12 +153,18 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
       success: true,
       data: {
         quote: {
+          instrumentId: "inst-test",
           symbol: "TEST",
+          exchange: "NSE",
+          isTradable: true,
           lastPricePaise: 150000,
           bidPricePaise: 149950,
           askPricePaise: 150050,
           previousClosePaise: 145000,
           priceUpdatedAt: "2026-11-18T10:00:00.000Z",
+          quoteSource: "SIMULATED",
+          quoteAgeMs: 100,
+          isStale: false,
         },
       },
     });
@@ -272,7 +284,7 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     expect(screen.getByText("HDFCBANK")).toBeInTheDocument();
   });
 
-  test("search: displays loading and error states in dedicated search panel", async () => {
+  test("search: displays loading state in dedicated search panel", async () => {
     let resolveSearch: (val: any) => void;
     const searchPromise = new Promise((resolve) => {
       resolveSearch = resolve;
@@ -287,23 +299,19 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
       fireEvent.change(input, { target: { value: "tata" } });
     });
 
-    // Before timer finishes, wait for debounce
+    // Wait for debounce
     await act(async () => {
       await new Promise((r) => setTimeout(r, 300));
     });
 
     expect(screen.getByText("Searching instruments...")).toBeInTheDocument();
 
-    // Now reject to test error state
+    // Now complete
     await act(async () => {
       resolveSearch!({
-        success: false,
-        error: { code: "SERVER_ERROR", message: "Network search timeout" },
+        success: true,
+        data: { items: [], pagination: { page: 1, limit: 15, total: 0, totalPages: 0 } },
       });
-    });
-
-    // Wait a tick
-    await act(async () => {
       await new Promise((r) => setTimeout(r, 10));
     });
 
@@ -360,7 +368,7 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     jest.spyOn(InstrumentsApi, "search").mockResolvedValue({
       success: true,
       data: {
-        items: [mockSearchResult("inst-itc", "ITC", "ITC Limited", 45000)],
+        items: [mockSearchResult("inst-itc", "ITC", "ITC Limited", 45000, 44000)],
         pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
       },
     });
@@ -384,6 +392,143 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     expect(screen.getByTestId("active-type")).toHaveTextContent("equity");
     // Row click should NOT add to watchlist
     expect(addSpy).not.toHaveBeenCalled();
+  });
+
+  // ==================== TASK 5.5.1 HARDENED SEARCH TESTS ====================
+
+  test("search error: API response with success: false displays error message, not empty-results", async () => {
+    jest.spyOn(InstrumentsApi, "search").mockResolvedValue({
+      success: false,
+      error: { code: "SEARCH_TIMEOUT", message: "Search service timed out. Please try again." },
+    });
+
+    renderWithProviders([]);
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "errorquery" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    expect(screen.getByText("Search service timed out. Please try again.")).toBeInTheDocument();
+    expect(screen.queryByText("No instruments found")).not.toBeInTheDocument();
+  });
+
+  test("search error: failed request with no backend message displays generic error", async () => {
+    jest.spyOn(InstrumentsApi, "search").mockResolvedValue({
+      success: false,
+    });
+
+    renderWithProviders([]);
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "genericerror" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    expect(screen.getByText("Search failed. Please try again.")).toBeInTheDocument();
+    expect(screen.queryByText("No instruments found")).not.toBeInTheDocument();
+  });
+
+  test("search lifecycle: clearing search invalidates an older pending response", async () => {
+    let resolveSlowSearch: (val: any) => void;
+    const slowPromise = new Promise((resolve) => {
+      resolveSlowSearch = resolve;
+    });
+
+    jest.spyOn(InstrumentsApi, "search").mockImplementation(() => slowPromise as any);
+
+    renderWithProviders([]);
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "slow" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    // Clear search before slow request finishes
+    const clearBtn = screen.getByLabelText("Clear search");
+    await act(async () => {
+      fireEvent.click(clearBtn);
+    });
+
+    // Now resolve slow search
+    await act(async () => {
+      resolveSlowSearch!({
+        success: true,
+        data: {
+          items: [mockSearchResult("inst-slow", "SLOWSTOCK", "Slow Response Stock")],
+          pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Result must NOT appear because search was cleared!
+    expect(screen.queryByText("SLOWSTOCK")).not.toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Search results" })).not.toBeInTheDocument();
+  });
+
+  test("search lifecycle: superseded search response cannot overwrite newer results", async () => {
+    let resolveFirst: (val: any) => void;
+    const firstPromise = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+
+    let resolveSecond: (val: any) => void;
+    const secondPromise = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+
+    const searchSpy = jest.spyOn(InstrumentsApi, "search");
+    searchSpy.mockImplementationOnce(() => firstPromise as any);
+    searchSpy.mockImplementationOnce(() => secondPromise as any);
+
+    renderWithProviders([]);
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+
+    // Query 1
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "first" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    // Query 2 (supersedes Query 1)
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "second" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    // Resolve Query 2 first
+    await act(async () => {
+      resolveSecond!({
+        success: true,
+        data: {
+          items: [mockSearchResult("inst-2", "SECOND", "Second Stock")],
+          pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(screen.getByText("SECOND")).toBeInTheDocument();
+
+    // Now older Query 1 finishes late
+    await act(async () => {
+      resolveFirst!({
+        success: true,
+        data: {
+          items: [mockSearchResult("inst-1", "FIRST", "First Stock")],
+          pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // SECOND remains visible, FIRST is ignored!
+    expect(screen.getByText("SECOND")).toBeInTheDocument();
+    expect(screen.queryByText("FIRST")).not.toBeInTheDocument();
   });
 
   // ==================== ADD TO WATCHLIST WORKFLOW ====================
@@ -465,7 +610,6 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
   });
 
   test("add to watchlist: handles WATCHLIST_CAPACITY_EXCEEDED backend error", async () => {
-    // 50 existing items
     const fullWatchlist = Array.from({ length: 50 }, (_, i) =>
       createMockWatchlistItem(i + 1)
     );
@@ -498,6 +642,130 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     expect(screen.getByText("Watchlist is full (max 50 instruments).")).toBeInTheDocument();
   });
 
+  // ==================== TASK 5.5.1 MUTATION LOCK TESTS ====================
+
+  test("mutation lock: rapid repeated clicks cannot submit duplicate add requests", async () => {
+    let resolveAdd: (val: any) => void;
+    const addPromise = new Promise((resolve) => {
+      resolveAdd = resolve;
+    });
+
+    const addSpy = jest.spyOn(WatchlistApi, "addItem").mockImplementation(() => addPromise as any);
+
+    jest.spyOn(InstrumentsApi, "search").mockResolvedValue({
+      success: true,
+      data: {
+        items: [mockSearchResult("inst-hcl", "HCLTECH", "HCL Technologies")],
+        pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
+      },
+    });
+
+    renderWithProviders([]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "hcl" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    const addBtn = screen.getByLabelText("Add HCLTECH to watchlist");
+
+    // Rapid double-clicks
+    await act(async () => {
+      fireEvent.click(addBtn);
+      fireEvent.click(addBtn);
+    });
+
+    // Synchronous ref guard ensures exactly 1 API call was issued
+    expect(addSpy).toHaveBeenCalledTimes(1);
+
+    // Complete the request
+    await act(async () => {
+      resolveAdd!({
+        success: true,
+        data: { item: createMockWatchlistItem(1, "HCLTECH") },
+      });
+    });
+  });
+
+  test("mutation lock: other add/remove/reorder actions are disabled while a mutation is pending", async () => {
+    let resolveRemove: (val: any) => void;
+    const removePromise = new Promise((resolve) => {
+      resolveRemove = resolve;
+    });
+
+    jest.spyOn(WatchlistApi, "removeItem").mockImplementation(() => removePromise as any);
+
+    const initialList = [
+      createMockWatchlistItem(1, "STOCK1"),
+      createMockWatchlistItem(2, "STOCK2"),
+    ];
+    renderWithProviders(initialList);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    // Click Remove on STOCK1
+    const removeBtn1 = screen.getByLabelText("Remove STOCK1 from watchlist");
+    await act(async () => {
+      fireEvent.click(removeBtn1);
+    });
+
+    // While remove is pending, remove on STOCK2 and reorder buttons must be disabled
+    const removeBtn2 = screen.getByLabelText("Remove STOCK2 from watchlist");
+    expect(removeBtn2).toBeDisabled();
+
+    const moveDown1 = screen.getByLabelText("Move STOCK1 down");
+    expect(moveDown1).toBeDisabled();
+
+    // Resolve remove
+    await act(async () => {
+      resolveRemove!({
+        success: true,
+        data: { success: true, removedInstrumentId: "inst-1" },
+      });
+    });
+
+    // Lock released
+    expect(screen.getByLabelText("Remove STOCK2 from watchlist")).not.toBeDisabled();
+  });
+
+  test("mutation lock: global lock is released after API failure and network exception", async () => {
+    const initialList = [createMockWatchlistItem(1, "RELIANCE")];
+    renderWithProviders(initialList);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    // 1. Test release on API failure
+    jest.spyOn(WatchlistApi, "removeItem").mockResolvedValueOnce({
+      success: false,
+      error: { code: "SERVER_ERROR", message: "Failed to delete" },
+    });
+
+    const removeBtn = screen.getByLabelText("Remove RELIANCE from watchlist");
+    await act(async () => {
+      fireEvent.click(removeBtn);
+    });
+
+    expect(screen.getByText("Failed to delete")).toBeInTheDocument();
+    // Lock released: button is enabled again
+    expect(removeBtn).not.toBeDisabled();
+
+    // 2. Test release on network exception
+    jest.spyOn(WatchlistApi, "removeItem").mockRejectedValueOnce(new Error("Network drop"));
+
+    await act(async () => {
+      fireEvent.click(removeBtn);
+    });
+
+    expect(screen.getByText("Network drop")).toBeInTheDocument();
+    expect(removeBtn).not.toBeDisabled();
+  });
+
   // ==================== REMOVE FROM WATCHLIST WORKFLOW ====================
 
   test("remove from watchlist: calls DELETE endpoint, removes row and updates count", async () => {
@@ -522,7 +790,7 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     });
 
     expect(deleteSpy).toHaveBeenCalledWith("inst-1");
-    expect(screen.queryByText("RELIANCE")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Remove RELIANCE from watchlist")).not.toBeInTheDocument();
     expect(screen.getByText("0 / 50")).toBeInTheDocument();
     expect(screen.getByText("Watchlist is Empty")).toBeInTheDocument();
   });
@@ -586,7 +854,6 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
   // ==================== PAGINATION SPECIFICATION TESTS ====================
 
   test("pagination: slices items to 10 per page and allows page navigation", async () => {
-    // 25 items: Page 1 = items 1..10, Page 2 = items 11..20, Page 3 = items 21..25
     const watchlist25 = Array.from({ length: 25 }, (_, i) =>
       createMockWatchlistItem(i + 1, `ITEM${i + 1}`)
     );
@@ -627,8 +894,6 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
   });
 
   test("pagination: disables tabs for empty pages", async () => {
-    // 15 items: only Page 1 (items 1..10) and Page 2 (items 11..15) exist.
-    // Pages 3, 4, 5 must be disabled.
     const watchlist15 = Array.from({ length: 15 }, (_, i) =>
       createMockWatchlistItem(i + 1, `STOCK${i + 1}`)
     );
@@ -652,7 +917,6 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
   });
 
   test("pagination: deleting the last item on page 2 auto-decrements active page to page 1", async () => {
-    // 11 items: 10 on page 1, 1 on page 2
     const watchlist11 = Array.from({ length: 11 }, (_, i) =>
       createMockWatchlistItem(i + 1, `EQ${i + 1}`)
     );
@@ -684,12 +948,10 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     // Active tab automatically moves back to Page 1!
     expect(screen.getByText("EQ1")).toBeInTheDocument();
     expect(screen.getByText("EQ10")).toBeInTheDocument();
-    // Tab 2 is now disabled
     expect(screen.getByRole("button", { name: "Watchlist page 2" })).toBeDisabled();
   });
 
   test("pagination: adding an 11th item makes page 2 active and discoverable", async () => {
-    // 10 items on page 1
     const watchlist10 = Array.from({ length: 10 }, (_, i) =>
       createMockWatchlistItem(i + 1, `ITEM${i + 1}`)
     );
@@ -804,5 +1066,199 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     expect(screen.getByText("Reorder failed on server")).toBeInTheDocument();
     // Move down on ALPHA should still be enabled (it rolled back to index 0)
     expect(screen.getByLabelText("Move ALPHA down")).not.toBeDisabled();
+  });
+
+  test("reordering: failed cross-page reorder restores both the list and the active page", async () => {
+    const watchlist11 = Array.from({ length: 11 }, (_, i) =>
+      createMockWatchlistItem(i + 1, `ITEM${i + 1}`)
+    );
+
+    renderWithProviders(watchlist11);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    expect(screen.getByText("ITEM10")).toBeInTheDocument();
+
+    // Move ITEM10 down across page boundary (to index 10 on page 2)
+    jest.spyOn(WatchlistApi, "reorder").mockResolvedValue({
+      success: false,
+      error: { code: "REORDER_FAILED", message: "Server reorder error" },
+    });
+
+    const moveDownItem10 = screen.getByLabelText("Move ITEM10 down");
+    await act(async () => {
+      fireEvent.click(moveDownItem10);
+    });
+
+    expect(screen.getByText("Server reorder error")).toBeInTheDocument();
+    // Active tab restored to Page 1
+    const tab1 = screen.getByRole("button", { name: "Watchlist page 1" });
+    expect(tab1).toHaveClass("active-tab");
+    expect(screen.getByText("ITEM10")).toBeInTheDocument();
+  });
+
+  // ==================== TASK 5.5.1 AUTHENTICATION TESTS ====================
+
+  test("authentication: a watchlist response arriving after logout is ignored", async () => {
+    let resolveWatchlist: (val: any) => void;
+    const watchlistPromise = new Promise((resolve) => {
+      resolveWatchlist = resolve;
+    });
+
+    jest.spyOn(WatchlistApi, "getWatchlist").mockImplementation(() => watchlistPromise as any);
+
+    render(
+      <BrowserRouter>
+        <AuthProvider>
+          <MarketProvider>
+            <AuthTrigger />
+            <WatchList />
+            <SelectedTester />
+          </MarketProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    );
+
+    // Login to trigger fetchWatchlist
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    // Logout while request is in flight
+    await act(async () => {
+      fireEvent.click(screen.getByText("Logout"));
+    });
+
+    expect(screen.getByText("Watchlist is Empty")).toBeInTheDocument();
+
+    // Older request resolves after logout
+    await act(async () => {
+      resolveWatchlist!({
+        success: true,
+        data: {
+          items: [createMockWatchlistItem(1, "LATE_STOCK")],
+          count: 1,
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Watchlist MUST remain empty and not show LATE_STOCK
+    expect(screen.queryByText("LATE_STOCK")).not.toBeInTheDocument();
+    expect(screen.getByText("Watchlist is Empty")).toBeInTheDocument();
+  });
+
+  test("authentication: older fetch cannot overwrite newer authenticated session's watchlist", async () => {
+    let resolveUserA: (val: any) => void;
+    const userAPromise = new Promise((resolve) => {
+      resolveUserA = resolve;
+    });
+
+    let resolveUserB: (val: any) => void;
+    const userBPromise = new Promise((resolve) => {
+      resolveUserB = resolve;
+    });
+
+    const watchlistSpy = jest.spyOn(WatchlistApi, "getWatchlist");
+    watchlistSpy.mockImplementationOnce(() => userAPromise as any);
+    watchlistSpy.mockImplementationOnce(() => userBPromise as any);
+
+    render(
+      <BrowserRouter>
+        <AuthProvider>
+          <MarketProvider>
+            <AuthTrigger />
+            <WatchList />
+            <SelectedTester />
+          </MarketProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    );
+
+    // User A logs in (triggers fetch A)
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    // Re-authenticate / trigger new fetch (User B)
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login B"));
+    });
+
+    // User B's fetch resolves first
+    await act(async () => {
+      resolveUserB!({
+        success: true,
+        data: {
+          items: [createMockWatchlistItem(1, "USER_B_STOCK")],
+          count: 1,
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    expect(screen.getByText("USER_B_STOCK")).toBeInTheDocument();
+
+    // User A's slow fetch resolves later
+    await act(async () => {
+      resolveUserA!({
+        success: true,
+        data: {
+          items: [createMockWatchlistItem(2, "USER_A_STOCK")],
+          count: 1,
+        },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // USER_B_STOCK remains, USER_A_STOCK is discarded!
+    expect(screen.getByText("USER_B_STOCK")).toBeInTheDocument();
+    expect(screen.queryByText("USER_A_STOCK")).not.toBeInTheDocument();
+  });
+
+  // ==================== TASK 5.5.1 QUOTE & STALE PRESENTATION TESTS ====================
+
+  test("quote presentation: missing or zero previous close displays '—' instead of fabricated 0.00%", async () => {
+    const itemNoPrevClose = createMockWatchlistItem(1, "NOPREV", 250000, 0);
+
+    renderWithProviders([itemNoPrevClose]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    expect(screen.getByText("NOPREV")).toBeInTheDocument();
+    expect(screen.getByText("₹2,500.00")).toBeInTheDocument();
+    // Percentage change must be '—', not '0.00%'
+    expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText("0.00%")).not.toBeInTheDocument();
+  });
+
+  test("quote presentation: stale quote visibly displays STALE badge", async () => {
+    const staleItem = createMockWatchlistItem(1, "STALESTK");
+    staleItem.quote!.isStale = true;
+
+    renderWithProviders([staleItem]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    expect(screen.getByText("STALESTK")).toBeInTheDocument();
+    expect(screen.getByLabelText("Stale quote")).toBeInTheDocument();
+    expect(screen.getByText("STALE")).toBeInTheDocument();
+  });
+
+  test("quote presentation: non-stale quote does not display STALE badge", async () => {
+    const freshItem = createMockWatchlistItem(1, "FRESHSTK");
+    freshItem.quote!.isStale = false;
+
+    renderWithProviders([freshItem]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    expect(screen.getByText("FRESHSTK")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Stale quote")).not.toBeInTheDocument();
+    expect(screen.queryByText("STALE")).not.toBeInTheDocument();
   });
 });
