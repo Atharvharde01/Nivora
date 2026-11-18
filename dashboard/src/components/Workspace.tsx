@@ -7,12 +7,9 @@
 
 import React, { useState } from "react";
 import {
-  ShowChart,
   TrendingUp,
   TrendingDown,
   Remove,
-  InfoOutlined,
-  Timeline,
   WarningAmber,
 } from "@mui/icons-material";
 import { useMarket } from "../context/MarketContext";
@@ -25,6 +22,7 @@ import {
   indexValueToPoints,
   paiseToRupees,
 } from "../api/types";
+import CandlestickChart from "./charts/CandlestickChart";
 
 export const Workspace: React.FC = () => {
   const {
@@ -37,7 +35,6 @@ export const Workspace: React.FC = () => {
   } = useMarket();
 
   const [activeInterval, setActiveInterval] = useState<CandleInterval>("1m");
-  const intervals: CandleInterval[] = ["1m", "5m", "15m", "1h", "1d"];
 
   const isIndex = selectedInstrument.type === "index";
 
@@ -201,57 +198,13 @@ export const Workspace: React.FC = () => {
         </div>
       </div>
 
-      {/* CHART WORKSPACE PLACEHOLDER & TIMEFRAME TOOLBAR */}
+      {/* INTERACTIVE CANDLESTICK CHART WORKSPACE (MILESTONE 5.4) */}
       <div className="chart-card">
-        {/* Timeframe toolbar */}
-        <div className="timeframe-toolbar">
-          <div className="toolbar-left">
-            <span className="toolbar-label">
-              <Timeline sx={{ fontSize: 18, mr: 0.5, verticalAlign: "middle" }} />
-              Timeframe:
-            </span>
-            <div className="interval-pills">
-              {intervals.map((interval) => (
-                <button
-                  key={interval}
-                  type="button"
-                  className={`interval-pill ${
-                    activeInterval === interval ? "active" : ""
-                  }`}
-                  onClick={() => setActiveInterval(interval)}
-                >
-                  {interval}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="toolbar-right">
-            <span className="session-tag">
-              IST Session: 09:15 - 15:30 (03:45 - 10:00 UTC)
-            </span>
-          </div>
-        </div>
-
-        {/* Chart Canvas Area */}
-        <div className="chart-canvas-placeholder">
-          <div className="chart-placeholder-content">
-            <ShowChart className="chart-big-icon" />
-            <h3>Candlestick Chart Workspace</h3>
-            <p className="chart-sub">
-              Ready for <strong>Milestone 5.4</strong>: Interactive candlestick rendering
-              for <strong>{selectedInstrument.symbol}</strong> ({activeInterval} interval).
-            </p>
-            <div className="chart-badges">
-              <span className="info-chip">
-                <InfoOutlined sx={{ fontSize: 14 }} />
-                Synthetic Market Engine
-              </span>
-              <span className="info-chip">24x7 Continuous Simulation</span>
-              <span className="info-chip">375 1m Candles / Trading Session</span>
-            </div>
-          </div>
-        </div>
+        <CandlestickChart
+          instrument={selectedInstrument}
+          interval={activeInterval}
+          onIntervalChange={setActiveInterval}
+        />
       </div>
     </div>
   );

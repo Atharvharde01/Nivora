@@ -8,7 +8,8 @@ import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from "ax
 import {
   ApiResponse,
   MarketCandlesQuery,
-  MarketCandlesResult,
+  MarketIndexCandlesResult,
+  InstrumentCandlesResult,
   MarketIndicesListResult,
   MarketIndexDetail,
   InstrumentQuote,
@@ -110,8 +111,8 @@ export const MarketApi = {
   async getIndexCandles(
     symbol: string,
     query?: MarketCandlesQuery
-  ): Promise<ApiResponse<MarketCandlesResult>> {
-    const res = await apiClient.get<ApiResponse<MarketCandlesResult>>(
+  ): Promise<ApiResponse<MarketIndexCandlesResult>> {
+    const res = await apiClient.get<ApiResponse<MarketIndexCandlesResult>>(
       `/api/v1/market/indices/${encodeURIComponent(symbol)}/candles`,
       { params: query }
     );
@@ -122,8 +123,8 @@ export const MarketApi = {
   async getInstrumentCandles(
     instrumentId: string,
     query?: MarketCandlesQuery
-  ): Promise<ApiResponse<MarketCandlesResult>> {
-    const res = await apiClient.get<ApiResponse<MarketCandlesResult>>(
+  ): Promise<ApiResponse<InstrumentCandlesResult>> {
+    const res = await apiClient.get<ApiResponse<InstrumentCandlesResult>>(
       `/api/v1/market/instruments/${encodeURIComponent(instrumentId)}/candles`,
       { params: query }
     );

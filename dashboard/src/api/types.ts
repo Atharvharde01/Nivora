@@ -162,15 +162,13 @@ export function formatIndexPoints(points: number, decimals: number = 2): string 
 
 export type CandleInterval = "1m" | "5m" | "15m" | "1h" | "1d";
 
-export interface MarketCandle {
-  openTime: string;
-  closeTime: string;
-  openPaise: number;
-  highPaise: number;
-  lowPaise: number;
-  closePaise: number;
-  volume: number;
-}
+export const INITIAL_CANDLE_LIMITS: Readonly<Record<CandleInterval, number>> = Object.freeze({
+  "1m": 375,
+  "5m": 200,
+  "15m": 200,
+  "1h": 120,
+  "1d": 90,
+});
 
 export interface MarketCandlesQuery {
   interval?: CandleInterval;
@@ -179,11 +177,55 @@ export interface MarketCandlesQuery {
   limit?: number;
 }
 
-export interface MarketCandlesResult {
-  symbol?: string;
-  instrumentId?: string;
+/**
+ * Synthetic market index OHLC candle returned by
+ * `GET /api/v1/market/indices/:symbol/candles`.
+ * OHLC values are fixed-point integers (100 units = 1.00 index point).
+ */
+export interface MarketIndexCandleDto {
+  indexId: string;
   interval: CandleInterval;
-  candles: MarketCandle[];
+  openTime: string;
+  closeTime: string;
+  openValue: number; // Divide by 100 for index points
+  highValue: number;
+  lowValue: number;
+  closeValue: number;
+  source: string; // "SIMULATED"
+}
+
+export interface MarketIndexCandlesResult {
+  index: MarketIndexSummary;
+  interval: CandleInterval;
+  candles: MarketIndexCandleDto[];
+}
+
+/**
+ * Tradable equity instrument OHLC candle returned by
+ * `GET /api/v1/market/instruments/:instrumentId/candles`.
+ * OHLC values are in integer paise (100 paise = ₹1.00).
+ */
+export interface InstrumentCandleDto {
+  instrumentId: string;
+  interval: CandleInterval;
+  openTime: string;
+  closeTime: string;
+  openPaise: number; // Divide by 100 for rupees
+  highPaise: number;
+  lowPaise: number;
+  closePaise: number;
+  source: string; // "SIMULATED"
+}
+
+export interface InstrumentCandlesResult {
+  instrument: {
+    _id: string;
+    symbol: string;
+    name: string;
+    exchange: string;
+  };
+  interval: CandleInterval;
+  candles: InstrumentCandleDto[];
 }
 
 // ==================== WATCHLIST ====================
