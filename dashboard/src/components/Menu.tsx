@@ -1,102 +1,129 @@
+/**
+ * NIVORA Trading Platform — Primary Navigation Menu
+ * Handles route navigation, active route styling, dev token session trigger,
+ * and user profile indicators.
+ */
+
 import React, { useState } from "react";
-import { Link } from "react-router-dom";
+import { NavLink } from "react-router-dom";
+import { VpnKey, PersonOutline } from "@mui/icons-material";
+import { useAuth } from "../context/AuthContext";
+import DevTokenModal from "./DevTokenModal";
 
-const Menu: React.FC = () => {
-  const [selectedMenu, setSelectedMenu] = useState<number>(0);
-  const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState<boolean>(false);
+export const Menu: React.FC = () => {
+  const { isAuthenticated, openTokenModal } = useAuth();
+  const [profileOpen, setProfileOpen] = useState<boolean>(false);
 
-  const handleMenuClick = (index: number) => {
-    setSelectedMenu(index);
+  const toggleProfile = () => {
+    setProfileOpen(!profileOpen);
   };
-
-  const handleProfileClick = () => {
-    setIsProfileDropdownOpen(!isProfileDropdownOpen);
-  };
-
-  const menuClass = "menu";
-  const activeMenuClass = "menu selected";
 
   return (
-    <div className="menu-container">
-      <img src="logo.png" alt="Logo" style={{ width: "50px" }} />
-      <div className="menus">
-        <ul>
-          <li>
-            <Link
-              style={{ textDecoration: "none" }}
-              to="/"
-              onClick={() => handleMenuClick(0)}
-            >
-              <p className={selectedMenu === 0 ? activeMenuClass : menuClass}>
-                Dashboard
-              </p>
-            </Link>
-          </li>
-          <li>
-            <Link
-              style={{ textDecoration: "none" }}
-              to="/orders"
-              onClick={() => handleMenuClick(1)}
-            >
-              <p className={selectedMenu === 1 ? activeMenuClass : menuClass}>
-                Orders
-              </p>
-            </Link>
-          </li>
-          <li>
-            <Link
-              style={{ textDecoration: "none" }}
-              to="/holdings"
-              onClick={() => handleMenuClick(2)}
-            >
-              <p className={selectedMenu === 2 ? activeMenuClass : menuClass}>
-                Holdings
-              </p>
-            </Link>
-          </li>
-          <li>
-            <Link
-              style={{ textDecoration: "none" }}
-              to="/positions"
-              onClick={() => handleMenuClick(3)}
-            >
-              <p className={selectedMenu === 3 ? activeMenuClass : menuClass}>
-                Positions
-              </p>
-            </Link>
-          </li>
-          <li>
-            <Link
-              style={{ textDecoration: "none" }}
-              to="funds"
-              onClick={() => handleMenuClick(4)}
-            >
-              <p className={selectedMenu === 4 ? activeMenuClass : menuClass}>
-                Funds
-              </p>
-            </Link>
-          </li>
-          <li>
-            <Link
-              style={{ textDecoration: "none" }}
-              to="/apps"
-              onClick={() => handleMenuClick(6)}
-            >
-              <p className={selectedMenu === 6 ? activeMenuClass : menuClass}>
-                Apps
-              </p>
-            </Link>
-          </li>
-        </ul>
-        <hr />
-        <div className="profile" onClick={handleProfileClick}>
-          <div className="avatar">ZU</div>
-          <p className="username">USERID</p>
+    <nav className="menu-container" aria-label="Main Navigation">
+      <ul className="nav-links">
+        <li>
+          <NavLink
+            to="/"
+            end
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Dashboard
+          </NavLink>
+        </li>
+        <li>
+          <NavLink
+            to="/markets"
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Markets
+          </NavLink>
+        </li>
+        <li>
+          <NavLink
+            to="/orders"
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Orders
+          </NavLink>
+        </li>
+        <li>
+          <NavLink
+            to="/trades"
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Trades
+          </NavLink>
+        </li>
+        <li>
+          <NavLink
+            to="/holdings"
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Holdings
+          </NavLink>
+        </li>
+        <li>
+          <NavLink
+            to="/positions"
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Positions
+          </NavLink>
+        </li>
+        <li>
+          <NavLink
+            to="/funds"
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Funds
+          </NavLink>
+        </li>
+        <li>
+          <NavLink
+            to="/apps"
+            className={({ isActive }) => (isActive ? "nav-link active" : "nav-link")}
+          >
+            Apps
+          </NavLink>
+        </li>
+      </ul>
+
+      <div className="nav-divider" />
+
+      {/* Dev Token & Session Area */}
+      <div className="nav-session">
+        <button
+          type="button"
+          className={`session-badge ${isAuthenticated ? "authenticated" : "unauthenticated"}`}
+          onClick={openTokenModal}
+          title="Click to manage in-memory Dev Session Token"
+        >
+          <VpnKey className="badge-icon" />
+          <span className="badge-label">
+            {isAuthenticated ? "Session Active" : "Dev Token"}
+          </span>
+          <span className={`status-dot ${isAuthenticated ? "online" : "offline"}`} />
+        </button>
+
+        {/* User Profile avatar */}
+        <div
+          className="profile"
+          onClick={toggleProfile}
+          role="button"
+          tabIndex={0}
+          title="User Account"
+        >
+          <div className="avatar">
+            <PersonOutline sx={{ fontSize: 18 }} />
+          </div>
+          <span className="username">DEMO</span>
         </div>
       </div>
-    </div>
+
+      {/* Developer Token Management Dialog */}
+      <DevTokenModal />
+    </nav>
   );
 };
 
 export default Menu;
-
