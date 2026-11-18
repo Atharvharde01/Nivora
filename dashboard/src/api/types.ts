@@ -175,6 +175,7 @@ export interface MarketCandlesQuery {
   from?: string;
   to?: string;
   limit?: number;
+  signal?: AbortSignal;
 }
 
 /**

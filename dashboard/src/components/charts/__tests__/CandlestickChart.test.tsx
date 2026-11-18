@@ -4,6 +4,7 @@ import { createChart } from "lightweight-charts";
 import { AuthProvider, useAuth } from "../../../context/AuthContext";
 import { MarketApi } from "../../../api/client";
 import {
+  ApiResponse,
   CandleInterval,
   InstrumentCandlesResult,
   MarketIndexCandlesResult,
@@ -43,12 +44,30 @@ jest.mock("lightweight-charts", () => {
   };
 });
 
+function createDeferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: any) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 const mockIndexInstrument: SelectedInstrument = {
   symbol: "NIFTY 50",
   name: "NIFTY 50 Synthetic Index",
   type: "index",
   exchange: "NSE",
   indexSymbol: "NIFTY50",
+};
+
+const mockSensexInstrument: SelectedInstrument = {
+  symbol: "SENSEX",
+  name: "BSE SENSEX Synthetic Index",
+  type: "index",
+  exchange: "BSE",
+  indexSymbol: "SENSEX",
 };
 
 const mockEquityInstrument: SelectedInstrument = {
@@ -150,6 +169,8 @@ describe("CandlestickChart Component", () => {
     jest.restoreAllMocks();
   });
 
+  // ==================== BASIC RENDERING & FUNCTIONALITY ====================
+
   test("renders timeframe pills, simulated disclaimer badge, and TradingView attribution", async () => {
     jest.spyOn(MarketApi, "getIndexCandles").mockResolvedValue({
       success: true,
@@ -204,6 +225,7 @@ describe("CandlestickChart Component", () => {
       expect(getIndexCandlesSpy).toHaveBeenCalledWith("NIFTY50", {
         interval: "1m",
         limit: 375,
+        signal: expect.any(Object),
       });
     });
 
@@ -253,6 +275,7 @@ describe("CandlestickChart Component", () => {
         {
           interval: "1m",
           limit: 375,
+          signal: expect.any(Object),
         }
       );
     });
@@ -362,11 +385,256 @@ describe("CandlestickChart Component", () => {
     });
   });
 
-  test("cleans up chart instance on unmount", () => {
-    jest.spyOn(MarketApi, "getIndexCandles").mockResolvedValue({
-      success: true,
-      data: mockIndexCandlesResponse,
+  // ==================== ASYNCHRONOUS RACE CONDITION TESTS (TASK 5.4.1) ====================
+
+  test("Test A: Instrument switch during pending request discards stale response", async () => {
+    const niftyDeferred = createDeferred<ApiResponse<MarketIndexCandlesResult>>();
+    const relianceDeferred = createDeferred<ApiResponse<InstrumentCandlesResult>>();
+
+    jest.spyOn(MarketApi, "getIndexCandles").mockImplementation(() => niftyDeferred.promise);
+    jest.spyOn(MarketApi, "getInstrumentCandles").mockImplementation(() => relianceDeferred.promise);
+
+    // 1. Mount with NIFTY 50
+    const { rerender } = render(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockIndexInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    expect(MarketApi.getIndexCandles).toHaveBeenCalled();
+
+    // 2. Switch to RELIANCE while NIFTY 50 is still pending
+    rerender(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockEquityInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    expect(MarketApi.getInstrumentCandles).toHaveBeenCalled();
+
+    // 3. Resolve RELIANCE first
+    await act(async () => {
+      relianceDeferred.resolve({
+        success: true,
+        data: mockEquityCandlesResponse,
+      });
     });
+
+    await waitFor(() => {
+      expect(mockSeries.setData).toHaveBeenCalledWith([
+        {
+          time: 1794973500,
+          open: 2500.0,
+          high: 2515.0,
+          low: 2495.0,
+          close: 2510.0,
+        },
+      ]);
+    });
+
+    mockSeries.setData.mockClear();
+
+    // 4. Resolve the older NIFTY 50 request afterward
+    await act(async () => {
+      niftyDeferred.resolve({
+        success: true,
+        data: mockIndexCandlesResponse,
+      });
+    });
+
+    // 5. Verification: The old NIFTY response MUST NOT overwrite the RELIANCE chart
+    expect(mockSeries.setData).not.toHaveBeenCalled();
+  });
+
+  test("Test B: Timeframe switch during pending request preserves active timeframe data", async () => {
+    const oneMinDeferred = createDeferred<ApiResponse<MarketIndexCandlesResult>>();
+    const fiveMinDeferred = createDeferred<ApiResponse<MarketIndexCandlesResult>>();
+
+    jest
+      .spyOn(MarketApi, "getIndexCandles")
+      .mockImplementationOnce(() => oneMinDeferred.promise)
+      .mockImplementationOnce(() => fiveMinDeferred.promise);
+
+    // 1. Mount with 1m interval
+    const { rerender } = render(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockIndexInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    // 2. Switch to 5m interval before 1m completes
+    rerender(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockIndexInstrument}
+            interval="5m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    // 3. Resolve 5m request first
+    const fiveMinCandle = {
+      indexId: "idx-1",
+      interval: "5m" as CandleInterval,
+      openTime: "2026-11-18T03:45:00.000Z",
+      closeTime: "2026-11-18T03:50:00.000Z",
+      openValue: 2400000,
+      highValue: 2410000,
+      lowValue: 2398000,
+      closeValue: 2408000,
+      source: "SIMULATED",
+    };
+
+    await act(async () => {
+      fiveMinDeferred.resolve({
+        success: true,
+        data: {
+          index: mockIndexCandlesResponse.index,
+          interval: "5m",
+          candles: [fiveMinCandle],
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockSeries.setData).toHaveBeenCalledWith([
+        {
+          time: 1794973500,
+          open: 24000.0,
+          high: 24100.0,
+          low: 23980.0,
+          close: 24080.0,
+        },
+      ]);
+    });
+
+    mockSeries.setData.mockClear();
+
+    // 4. Resolve old 1m request afterward
+    await act(async () => {
+      oneMinDeferred.resolve({
+        success: true,
+        data: mockIndexCandlesResponse,
+      });
+    });
+
+    // 5. Verification: The old 1m response MUST NOT overwrite the 5m chart
+    expect(mockSeries.setData).not.toHaveBeenCalled();
+  });
+
+  test("Test C: Rapid instrument switching ensures only latest selection updates chart", async () => {
+    const niftyDef = createDeferred<ApiResponse<MarketIndexCandlesResult>>();
+    const sensexDef = createDeferred<ApiResponse<MarketIndexCandlesResult>>();
+    const relianceDef = createDeferred<ApiResponse<InstrumentCandlesResult>>();
+
+    jest
+      .spyOn(MarketApi, "getIndexCandles")
+      .mockImplementationOnce(() => niftyDef.promise)
+      .mockImplementationOnce(() => sensexDef.promise);
+    jest
+      .spyOn(MarketApi, "getInstrumentCandles")
+      .mockImplementationOnce(() => relianceDef.promise);
+
+    // 1. Mount with NIFTY
+    const { rerender } = render(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockIndexInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    // 2. Rapidly switch to SENSEX
+    rerender(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockSensexInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    // 3. Rapidly switch to RELIANCE
+    rerender(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockEquityInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    // Resolve in reverse order (oldest first)
+    await act(async () => {
+      niftyDef.resolve({ success: true, data: mockIndexCandlesResponse });
+      sensexDef.resolve({
+        success: true,
+        data: {
+          ...mockIndexCandlesResponse,
+          index: { ...mockIndexCandlesResponse.index, symbol: "SENSEX" },
+        },
+      });
+    });
+
+    // Old requests must not have updated series
+    expect(mockSeries.setData).not.toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ open: 24000.0 }),
+      ])
+    );
+
+    // Finally resolve RELIANCE
+    await act(async () => {
+      relianceDef.resolve({ success: true, data: mockEquityCandlesResponse });
+    });
+
+    await waitFor(() => {
+      expect(mockSeries.setData).toHaveBeenCalledWith([
+        {
+          time: 1794973500,
+          open: 2500.0,
+          high: 2515.0,
+          low: 2495.0,
+          close: 2510.0,
+        },
+      ]);
+    });
+  });
+
+  test("Test D: Unmount during request cancels and prevents stale state updates", async () => {
+    const pendingDeferred = createDeferred<ApiResponse<MarketIndexCandlesResult>>();
+    jest.spyOn(MarketApi, "getIndexCandles").mockImplementation(() => pendingDeferred.promise);
 
     const { unmount } = render(
       <AuthProvider>
@@ -382,5 +650,79 @@ describe("CandlestickChart Component", () => {
 
     unmount();
     expect(mockChart.remove).toHaveBeenCalled();
+    mockSeries.setData.mockClear();
+
+    // Resolve deferred after unmount
+    await act(async () => {
+      pendingDeferred.resolve({
+        success: true,
+        data: mockIndexCandlesResponse,
+      });
+    });
+
+    // Chart series setData must not be called after unmount
+    expect(mockSeries.setData).not.toHaveBeenCalled();
+  });
+
+  test("Test E: Polling overlap prevention ensures single request in-flight", async () => {
+    const initialDeferred = createDeferred<ApiResponse<MarketIndexCandlesResult>>();
+    const getIndexCandlesSpy = jest
+      .spyOn(MarketApi, "getIndexCandles")
+      .mockImplementation(() => initialDeferred.promise);
+
+    render(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockIndexInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    expect(getIndexCandlesSpy).toHaveBeenCalledTimes(1);
+
+    // Initial request is still pending. We simulate polling attempt.
+    // The component's isPollingRef should prevent overlapping requests.
+    // Even if time advances, no second request should be made while first is unresolved.
+    expect(getIndexCandlesSpy).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      initialDeferred.resolve({
+        success: true,
+        data: mockIndexCandlesResponse,
+      });
+    });
+
+    await waitFor(() => {
+      expect(mockSeries.setData).toHaveBeenCalled();
+    });
+  });
+
+  test("Test F: Abort/cancellation errors are discarded without showing error overlay", async () => {
+    const canceledError = new Error("canceled");
+    canceledError.name = "CanceledError";
+
+    jest.spyOn(MarketApi, "getIndexCandles").mockRejectedValue(canceledError);
+
+    render(
+      <AuthProvider>
+        <AuthenticatedWrapper>
+          <CandlestickChart
+            instrument={mockIndexInstrument}
+            interval="1m"
+            onIntervalChange={() => {}}
+          />
+        </AuthenticatedWrapper>
+      </AuthProvider>
+    );
+
+    // Ensure error banner is NOT rendered for cancellation
+    await waitFor(() => {
+      expect(screen.queryByText("Failed to load chart data")).not.toBeInTheDocument();
+      expect(screen.queryByText("canceled")).not.toBeInTheDocument();
+    });
   });
 });

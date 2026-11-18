@@ -112,9 +112,10 @@ export const MarketApi = {
     symbol: string,
     query?: MarketCandlesQuery
   ): Promise<ApiResponse<MarketIndexCandlesResult>> {
+    const { signal, ...params } = query || {};
     const res = await apiClient.get<ApiResponse<MarketIndexCandlesResult>>(
       `/api/v1/market/indices/${encodeURIComponent(symbol)}/candles`,
-      { params: query }
+      { params, signal }
     );
     return res.data;
   },
@@ -124,9 +125,10 @@ export const MarketApi = {
     instrumentId: string,
     query?: MarketCandlesQuery
   ): Promise<ApiResponse<InstrumentCandlesResult>> {
+    const { signal, ...params } = query || {};
     const res = await apiClient.get<ApiResponse<InstrumentCandlesResult>>(
       `/api/v1/market/instruments/${encodeURIComponent(instrumentId)}/candles`,
-      { params: query }
+      { params, signal }
     );
     return res.data;
   },

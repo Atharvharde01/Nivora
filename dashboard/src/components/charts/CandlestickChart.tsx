@@ -2,15 +2,13 @@
  * NIVORA Trading Platform — Interactive Candlestick Chart
  * Powered by TradingView Lightweight Charts v5.3.0.
  *
- * Supports:
- * - Synthetic Market Indices: NIFTY 50 and SENSEX (/api/v1/market/indices/:symbol/candles)
- * - Tradable Equities: RELIANCE, TCS, INFY, etc. (/api/v1/market/instruments/:instrumentId/candles)
- * - Timeframes: 1m, 5m, 15m, 1h, 1d
- * - Fixed-point index points & integer paise conversions
- * - Asia/Kolkata timezone formatting for crosshair & time scale
- * - 15-second background polling with concurrency guards
- * - Clean responsive ResizeObserver lifecycle management
- * - Prominent simulated data disclaimer & TradingView license attribution
+ * Hardened Request Lifecycle (Milestone 5, Task 5.4.1):
+ * - Stable request identity: `${type}:${targetSymbol}:${interval}`
+ * - Monotonically increasing request generation IDs to reject stale async responses
+ * - AbortController cancellation for superseded network requests
+ * - Strict multi-layer guards against out-of-order race conditions
+ * - Complete isolation: old requests cannot update series, legend, cache, or loading
+ * - Clean polling timer replacement and unmount lifecycle management
  */
 
 import React, { useCallback, useEffect, useRef, useState } from "react";
@@ -80,9 +78,14 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
 
-  // Guard against concurrent overlapping fetch requests
-  const isFetchingRef = useRef<boolean>(false);
-  // Track currently loaded candles to avoid redundant full setData re-renders
+  // Component lifecycle and concurrency guards
+  const isMountedRef = useRef<boolean>(true);
+  const requestIdRef = useRef<number>(0);
+  const isPollingRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+  const pollTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Track currently loaded candles to allow incremental series updates
   const lastCandlesRef = useRef<CandlestickData<Time>[]>([]);
 
   const [loading, setLoading] = useState<boolean>(true);
@@ -104,26 +107,55 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     return "SENSEX";
   }, [instrument]);
 
-  // ==================== CHART DATA FETCHING ====================
+  // Stable request key uniquely identifying instrument + timeframe
+  const targetSymbol = isIndex
+    ? getIndexCanonicalSymbol()
+    : instrument.instrumentId || instrument.symbol;
+  const currentRequestKey = `${instrument.type}:${targetSymbol}:${interval}`;
+  const activeRequestKeyRef = useRef<string>(currentRequestKey);
+  activeRequestKeyRef.current = currentRequestKey;
+
+  // ==================== ASYNCHRONOUS CANDLE FETCHING ====================
 
   const fetchCandles = useCallback(
     async (isPolling: boolean = false) => {
-      if (!isAuthenticated) {
-        setLoading(false);
+      if (!isAuthenticated || !isMountedRef.current) {
+        if (isMountedRef.current) {
+          setLoading(false);
+        }
         return;
       }
 
-      if (isFetchingRef.current) {
-        return; // Prevent overlapping requests
-      }
+      if (isPolling) {
+        // Prevent duplicate background polls for the same identity
+        if (isPollingRef.current) {
+          return;
+        }
+        isPollingRef.current = true;
+      } else {
+        // User-driven selection change or initial fetch:
+        // 1. Abort any previous in-flight request
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+          abortControllerRef.current = null;
+        }
 
-      isFetchingRef.current = true;
+        // 2. Increment request generation ID to invalidate any prior unresolved responses
+        requestIdRef.current += 1;
 
-      if (!isPolling) {
+        // 3. Create fresh AbortController for this generation
+        abortControllerRef.current = new AbortController();
+
+        // 4. Update UI states for the fresh selection
         setLoading(true);
         setError(null);
         setPollError(null);
       }
+
+      const thisRequestId = requestIdRef.current;
+      const thisRequestKey = currentRequestKey;
+      const thisSeries = seriesRef.current;
+      const abortSignal = isPolling ? undefined : abortControllerRef.current?.signal;
 
       const limit = INITIAL_CANDLE_LIMITS[interval];
 
@@ -135,7 +167,19 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           const response = await MarketApi.getIndexCandles(symbol, {
             interval,
             limit,
+            signal: abortSignal,
           });
+
+          // Guard against stale response
+          if (
+            !isMountedRef.current ||
+            thisRequestId !== requestIdRef.current ||
+            thisRequestKey !== activeRequestKeyRef.current ||
+            seriesRef.current !== thisSeries ||
+            !thisSeries
+          ) {
+            return;
+          }
 
           if (response.success && response.data && Array.isArray(response.data.candles)) {
             transformed = transformIndexCandles(response.data.candles);
@@ -152,8 +196,20 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
             {
               interval,
               limit,
+              signal: abortSignal,
             }
           );
+
+          // Guard against stale response
+          if (
+            !isMountedRef.current ||
+            thisRequestId !== requestIdRef.current ||
+            thisRequestKey !== activeRequestKeyRef.current ||
+            seriesRef.current !== thisSeries ||
+            !thisSeries
+          ) {
+            return;
+          }
 
           if (response.success && response.data && Array.isArray(response.data.candles)) {
             transformed = transformEquityCandles(response.data.candles);
@@ -162,39 +218,43 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
           }
         }
 
+        // Final state validation before applying to series
+        if (
+          !isMountedRef.current ||
+          thisRequestId !== requestIdRef.current ||
+          thisRequestKey !== activeRequestKeyRef.current ||
+          seriesRef.current !== thisSeries ||
+          !thisSeries
+        ) {
+          return;
+        }
+
         if (transformed.length === 0) {
           setIsEmpty(true);
           lastCandlesRef.current = [];
-          if (seriesRef.current) {
-            seriesRef.current.setData([]);
-          }
+          thisSeries.setData([]);
         } else {
           setIsEmpty(false);
 
-          // Update chart series
-          if (seriesRef.current) {
-            const prev = lastCandlesRef.current;
-            // Check if we can do an incremental update (last candle only)
-            const canIncrementalUpdate =
-              isPolling &&
-              prev.length > 0 &&
-              prev.length === transformed.length &&
-              prev[prev.length - 1].time === transformed[transformed.length - 1].time;
+          const prev = lastCandlesRef.current;
+          const canIncrementalUpdate =
+            isPolling &&
+            prev.length > 0 &&
+            prev.length === transformed.length &&
+            prev[prev.length - 1].time === transformed[transformed.length - 1].time;
 
-            if (canIncrementalUpdate) {
-              const lastCandle = transformed[transformed.length - 1];
-              seriesRef.current.update(lastCandle);
-            } else {
-              seriesRef.current.setData(transformed);
-              if (!isPolling) {
-                chartRef.current?.timeScale().fitContent();
-              }
+          if (canIncrementalUpdate) {
+            const lastCandle = transformed[transformed.length - 1];
+            thisSeries.update(lastCandle);
+          } else {
+            thisSeries.setData(transformed);
+            if (!isPolling) {
+              chartRef.current?.timeScale().fitContent();
             }
           }
 
           lastCandlesRef.current = transformed;
 
-          // Update legend with latest candle if no crosshair hover is active
           const latest = transformed[transformed.length - 1];
           const diff = latest.close - latest.open;
           const pct = latest.open > 0 ? (diff / latest.open) * 100 : 0;
@@ -214,32 +274,70 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
         setError(null);
         setPollError(null);
       } catch (err: unknown) {
+        // Discard errors from stale or superseded requests
+        if (
+          !isMountedRef.current ||
+          thisRequestId !== requestIdRef.current ||
+          thisRequestKey !== activeRequestKeyRef.current
+        ) {
+          return;
+        }
+
+        // Ignore intentional cancellations
+        const isAbortError =
+          (err instanceof Error &&
+            (err.name === "AbortError" ||
+              err.name === "CanceledError" ||
+              err.message.includes("canceled") ||
+              err.message.includes("aborted"))) ||
+          (err as any)?.code === "ERR_CANCELED";
+
+        if (isAbortError) {
+          return;
+        }
+
         const errorMsg =
           err instanceof Error ? err.message : "Failed to fetch market candles";
         if (isPolling) {
-          // On polling error, keep existing chart data visible but surface transient warning
+          // Keep existing chart visible during background refresh glitches
           setPollError(errorMsg);
         } else {
           setError(errorMsg);
         }
       } finally {
-        setLoading(false);
-        isFetchingRef.current = false;
+        if (isPolling) {
+          isPollingRef.current = false;
+        } else if (
+          isMountedRef.current &&
+          thisRequestId === requestIdRef.current &&
+          thisRequestKey === activeRequestKeyRef.current
+        ) {
+          setLoading(false);
+        }
       }
     },
-    [isAuthenticated, interval, isIndex, instrument, getIndexCanonicalSymbol]
+    [
+      isAuthenticated,
+      interval,
+      isIndex,
+      instrument,
+      getIndexCanonicalSymbol,
+      currentRequestKey,
+    ]
   );
 
   // ==================== LIGHTWEIGHT CHARTS LIFECYCLE ====================
 
+  // 1. Initialize Lightweight Chart instance on mount
   useEffect(() => {
+    isMountedRef.current = true;
+
     if (!containerRef.current) {
       return;
     }
 
     const container = containerRef.current;
 
-    // Create Lightweight Chart instance using v5 API
     const chart = createChart(container, {
       width: container.clientWidth || 800,
       height: 420,
@@ -274,7 +372,6 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
       return;
     }
 
-    // Add CandlestickSeries using official v5 API (chart.addSeries(CandlestickSeries, options))
     const series = chart.addSeries(CandlestickSeries, {
       upColor: "#089981",
       downColor: "#f23645",
@@ -291,10 +388,9 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
     chartRef.current = chart;
     seriesRef.current = series;
 
-    // Crosshair hover legend listener
+    // Crosshair hover listener
     chart.subscribeCrosshairMove((param: MouseEventParams) => {
       if (!param || !param.time || !param.seriesData || !seriesRef.current) {
-        // Fall back to latest candle in cache
         const candles = lastCandlesRef.current;
         if (candles.length > 0) {
           const latest = candles[candles.length - 1];
@@ -333,7 +429,6 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
       }
     });
 
-    // ResizeObserver for clean responsive width/height tracking
     const resizeObserver = new ResizeObserver((entries) => {
       if (!entries || entries.length === 0 || !chartRef.current) {
         return;
@@ -346,25 +441,90 @@ export const CandlestickChart: React.FC<CandlestickChartProps> = ({
 
     resizeObserver.observe(container);
 
-    // Initial fetch on mount or instrument/interval change
-    fetchCandles(false);
-
-    // 15-second background polling
-    const pollTimerId = setInterval(() => {
-      fetchCandles(true);
-    }, CHART_POLL_INTERVAL_MS);
-
-    // Teardown observer, polling timer, and chart instance
     return () => {
-      clearInterval(pollTimerId);
+      isMountedRef.current = false;
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
       resizeObserver.disconnect();
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
     };
-  }, [fetchCandles, interval, isIndex]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fit content helper
+  // 2. Synchronize price format and scale options on interval / index change without destroying chart
+  useEffect(() => {
+    if (chartRef.current) {
+      chartRef.current.applyOptions({
+        timeScale: {
+          timeVisible: interval !== "1d",
+          secondsVisible: false,
+        },
+        localization: {
+          locale: "en-IN",
+          timeFormatter: (time: number) => formatUnixTimestampToIST(time, interval),
+          priceFormatter: (price: number) => formatChartPrice(price, isIndex),
+        },
+      });
+    }
+
+    if (seriesRef.current) {
+      seriesRef.current.applyOptions({
+        priceFormat: {
+          type: "custom",
+          formatter: (price: number) => formatChartPrice(price, isIndex),
+          minMove: 0.05,
+        },
+      });
+    }
+  }, [interval, isIndex]);
+
+  // 3. Selection change effect: resets old candle data, aborts stale requests, and starts fetch + polling
+  useEffect(() => {
+    // Clear existing polling timer
+    if (pollTimerRef.current) {
+      clearInterval(pollTimerRef.current);
+      pollTimerRef.current = null;
+    }
+
+    if (!isAuthenticated) {
+      setLoading(false);
+      return;
+    }
+
+    // Isolate chart display: clear previous instrument's candles to avoid visual leakage
+    lastCandlesRef.current = [];
+    if (seriesRef.current) {
+      seriesRef.current.setData([]);
+    }
+    setLegend(null);
+
+    // Initial fetch for the newly selected instrument / timeframe
+    fetchCandles(false);
+
+    // 15-second recurring polling for the active selection
+    pollTimerRef.current = setInterval(() => {
+      fetchCandles(true);
+    }, CHART_POLL_INTERVAL_MS);
+
+    return () => {
+      if (pollTimerRef.current) {
+        clearInterval(pollTimerRef.current);
+        pollTimerRef.current = null;
+      }
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, [currentRequestKey, isAuthenticated, fetchCandles]);
+
   const handleFitContent = () => {
     chartRef.current?.timeScale().fitContent();
   };
