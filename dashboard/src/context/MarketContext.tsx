@@ -40,6 +40,7 @@ export interface SelectedInstrument {
   // Fallback quote metrics if available
   lastPricePaise?: number;
   previousClosePaise?: number;
+  isTradable?: boolean;
 }
 
 export const DEFAULT_SELECTED_INSTRUMENT: SelectedInstrument = {

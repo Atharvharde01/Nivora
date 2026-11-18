@@ -6,6 +6,7 @@
 import React from "react";
 import { AuthProvider } from "../context/AuthContext";
 import { MarketProvider } from "../context/MarketContext";
+import { PortfolioProvider } from "../context/PortfolioContext";
 import TopBar from "./TopBar";
 import Dashboard from "./Dashboard";
 import OrderActionWindow from "./OrderActionWindow";
@@ -14,11 +15,13 @@ export const Home: React.FC = () => {
   return (
     <AuthProvider>
       <MarketProvider>
-        <div className="nivora-shell">
-          <TopBar />
-          <Dashboard />
-          <OrderActionWindow />
-        </div>
+        <PortfolioProvider>
+          <div className="nivora-shell">
+            <TopBar />
+            <Dashboard />
+            <OrderActionWindow />
+          </div>
+        </PortfolioProvider>
       </MarketProvider>
     </AuthProvider>
   );

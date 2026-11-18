@@ -15,9 +15,12 @@ import {
   InstrumentQuote,
   InstrumentSummary,
   OrdersListResult,
-  PortfolioHoldingDto,
+  PlaceOrderPayload,
+  OrderExecutionResult,
+  OrderSide,
+  OrderStatus,
   PortfolioPositionDto,
-  PortfolioSummaryDto,
+  PortfolioResponseData,
   PracticeAccountSummaryDto,
   SearchInstrumentsParams,
   SearchInstrumentsResult,
@@ -27,7 +30,7 @@ import {
   RemoveWatchlistItemResult,
 } from "./types";
 
-export const DEFAULT_API_URL = "http://localhost:5000";
+export const DEFAULT_API_URL = "http://localhost:3002";
 export const API_TIMEOUT_MS = 10000;
 
 export const baseURL =
@@ -203,22 +206,33 @@ export const WatchlistApi = {
 
 export const OrdersApi = {
   /** List user orders */
-  async getOrders(): Promise<ApiResponse<OrdersListResult>> {
-    const res = await apiClient.get<ApiResponse<OrdersListResult>>("/api/v1/orders");
+  async getOrders(params?: {
+    practiceAccountId?: string;
+    instrumentId?: string;
+    side?: OrderSide;
+    status?: OrderStatus;
+    page?: number;
+    limit?: number;
+  }): Promise<ApiResponse<OrdersListResult>> {
+    const res = await apiClient.get<ApiResponse<OrdersListResult>>("/api/v1/orders", {
+      params,
+    });
     return res.data;
   },
 
-  /** Place a new order (placeholder for Task 5.6) */
-  async placeOrder(payload: {
-    instrumentId: string;
-    side: "BUY" | "SELL";
-    orderType: "MARKET";
-    quantity: number;
-    idempotencyKey?: string;
-  }): Promise<ApiResponse<{ order: unknown }>> {
-    const res = await apiClient.post<ApiResponse<{ order: unknown }>>(
+  /** Place a simulated market order with Idempotency-Key header */
+  async placeOrder(
+    payload: PlaceOrderPayload,
+    idempotencyKey: string
+  ): Promise<ApiResponse<OrderExecutionResult>> {
+    const res = await apiClient.post<ApiResponse<OrderExecutionResult>>(
       "/api/v1/orders",
-      payload
+      payload,
+      {
+        headers: {
+          "Idempotency-Key": idempotencyKey,
+        },
+      }
     );
     return res.data;
   },
@@ -226,33 +240,42 @@ export const OrdersApi = {
 
 export const TradesApi = {
   /** List user trade executions */
-  async getTrades(): Promise<ApiResponse<TradesListResult>> {
-    const res = await apiClient.get<ApiResponse<TradesListResult>>("/api/v1/trades");
+  async getTrades(params?: {
+    practiceAccountId?: string;
+    instrumentId?: string;
+    side?: OrderSide;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<ApiResponse<TradesListResult>> {
+    const res = await apiClient.get<ApiResponse<TradesListResult>>("/api/v1/trades", {
+      params,
+    });
     return res.data;
   },
 };
 
 export const PortfolioApi = {
-  /** Get holdings */
-  async getHoldings(): Promise<ApiResponse<{ items: PortfolioHoldingDto[] }>> {
-    const res = await apiClient.get<ApiResponse<{ items: PortfolioHoldingDto[] }>>(
-      "/api/v1/portfolio/holdings"
+  /** Get full portfolio (summary and active positions) */
+  async getPortfolio(params?: {
+    practiceAccountId?: string;
+  }): Promise<ApiResponse<PortfolioResponseData>> {
+    const res = await apiClient.get<ApiResponse<PortfolioResponseData>>(
+      "/api/v1/portfolio",
+      { params }
     );
     return res.data;
   },
 
-  /** Get open positions */
-  async getPositions(): Promise<ApiResponse<{ items: PortfolioPositionDto[] }>> {
-    const res = await apiClient.get<ApiResponse<{ items: PortfolioPositionDto[] }>>(
-      "/api/v1/portfolio/positions"
-    );
-    return res.data;
-  },
-
-  /** Get portfolio summary metrics */
-  async getSummary(): Promise<ApiResponse<{ summary: PortfolioSummaryDto }>> {
-    const res = await apiClient.get<ApiResponse<{ summary: PortfolioSummaryDto }>>(
-      "/api/v1/portfolio/summary"
+  /** Get specific position by instrument ID */
+  async getPositionByInstrumentId(
+    instrumentId: string,
+    params?: { practiceAccountId?: string }
+  ): Promise<ApiResponse<{ position: PortfolioPositionDto }>> {
+    const res = await apiClient.get<ApiResponse<{ position: PortfolioPositionDto }>>(
+      `/api/v1/portfolio/positions/${encodeURIComponent(instrumentId)}`,
+      { params }
     );
     return res.data;
   },
@@ -262,7 +285,7 @@ export const AccountsApi = {
   /** Get current active practice account details */
   async getActiveAccount(): Promise<ApiResponse<{ account: PracticeAccountSummaryDto }>> {
     const res = await apiClient.get<ApiResponse<{ account: PracticeAccountSummaryDto }>>(
-      "/api/v1/accounts/me"
+      "/api/v1/accounts/active"
     );
     return res.data;
   },

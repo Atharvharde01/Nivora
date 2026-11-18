@@ -270,6 +270,22 @@ export type OrderSide = "BUY" | "SELL";
 export type OrderType = "MARKET";
 export type OrderStatus = "RECEIVED" | "EXECUTED" | "REJECTED";
 
+export type OrderRejectionCode =
+  | "INSUFFICIENT_FUNDS"
+  | "INSUFFICIENT_QUANTITY"
+  | "INSTRUMENT_UNAVAILABLE"
+  | "STALE_QUOTE"
+  | "ACCOUNT_INACTIVE"
+  | "OVERFLOW_LIMIT_EXCEEDED"
+  | "VALIDATION_ERROR";
+
+export interface PlaceOrderPayload {
+  instrumentId: string;
+  side: OrderSide;
+  quantity: number;
+  practiceAccountId?: string;
+}
+
 export interface OrderDto {
   _id: string;
   userId?: string;
@@ -285,7 +301,7 @@ export interface OrderDto {
   executedQuantity: number;
   executionPricePaise?: number;
   totalValuePaise?: number;
-  rejectionCode?: string;
+  rejectionCode?: OrderRejectionCode;
   rejectionReason?: string;
   executedAt?: string;
   rejectedAt?: string;
@@ -295,6 +311,21 @@ export interface OrderDto {
 
 export interface OrdersListResult {
   items: OrderDto[];
+  pagination?: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+}
+
+export interface OrderExecutionResult {
+  order: OrderDto;
+  trade: TradeDto | null;
+  status: OrderStatus;
+  wasIdempotentReplay: boolean;
+  rejectionCode?: OrderRejectionCode;
+  rejectionReason?: string;
 }
 
 export interface TradeQuoteSnapshot {
@@ -325,6 +356,12 @@ export interface TradeDto {
 
 export interface TradesListResult {
   items: TradeDto[];
+  pagination?: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
 }
 
 // ==================== PORTFOLIO & ACCOUNTS ====================
@@ -362,6 +399,7 @@ export interface PortfolioPositionDto {
   quoteAgeMs: number;
   isQuoteStale: boolean;
   isTradable: boolean;
+  quoteSource?: string;
 }
 
 export interface PortfolioSummaryDto {
@@ -377,18 +415,31 @@ export interface PortfolioSummaryDto {
   hasStaleQuotes: boolean;
 }
 
+export interface PortfolioResponseData {
+  practiceAccountId: string;
+  summary: PortfolioSummaryDto;
+  positions: PortfolioPositionDto[];
+  activePositionsCount: number;
+}
+
 export interface PortfolioViewDto {
   summary: PortfolioSummaryDto;
   positions: PortfolioPositionDto[];
 }
 
 export interface PracticeAccountSummaryDto {
-  id: string;
+  accountId: string;
+  id?: string;
+  _id?: string;
   userId: string;
   accountNumber: number;
-  virtualBalancePaise: number;
-  isActive: boolean;
+  status: "ACTIVE" | "ARCHIVED";
+  isActive?: boolean;
+  initialBalancePaise: number;
+  cashBalancePaise: number;
+  virtualBalancePaise?: number;
   version: number;
+  archivedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

@@ -1,54 +1,45 @@
 /**
  * NIVORA Trading Platform — Dashboard Summary View
  * Combines the interactive instrument workspace with account and portfolio metrics.
+ * Connects directly to PortfolioContext for server-authoritative valuations.
  */
 
-import React, { useEffect, useState } from "react";
+import React from "react";
 import Workspace from "./Workspace";
 import { useAuth } from "../context/AuthContext";
-import { PortfolioApi, AccountsApi } from "../api/client";
-import { PortfolioSummaryDto, PracticeAccountSummaryDto } from "../api/types";
+import { usePortfolio } from "../context/PortfolioContext";
+import { formatRupees, paiseToRupees } from "../api/types";
 import { AccountBalanceWallet, PieChartOutline } from "@mui/icons-material";
 
 export const Summary: React.FC = () => {
   const { isAuthenticated } = useAuth();
-  const [summary, setSummary] = useState<PortfolioSummaryDto | null>(null);
-  const [account, setAccount] = useState<PracticeAccountSummaryDto | null>(null);
+  const { summary, account } = usePortfolio();
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setSummary(null);
-      setAccount(null);
-      return;
-    }
+  const cashBalanceRupees = summary
+    ? paiseToRupees(summary.cashBalancePaise)
+    : account
+    ? paiseToRupees(account.cashBalancePaise)
+    : null;
 
-    let active = true;
+  const usedMarginRupees = summary
+    ? paiseToRupees(summary.totalInvestedPaise)
+    : null;
 
-    async function loadData() {
-      try {
-        const [portfolioRes, accountRes] = await Promise.allSettled([
-          PortfolioApi.getSummary(),
-          AccountsApi.getActiveAccount(),
-        ]);
+  const openingBalanceRupees = account
+    ? paiseToRupees(account.initialBalancePaise)
+    : null;
 
-        if (active && portfolioRes.status === "fulfilled" && portfolioRes.value.success) {
-          setSummary(portfolioRes.value.data?.summary || null);
-        }
+  const currentMarketValueRupees = summary
+    ? paiseToRupees(summary.currentMarketValuePaise)
+    : null;
 
-        if (active && accountRes.status === "fulfilled" && accountRes.value.success) {
-          setAccount(accountRes.value.data?.account || null);
-        }
-      } catch {
-        // Silently preserve clean empty state
-      }
-    }
+  const totalInvestedRupees = summary
+    ? paiseToRupees(summary.totalInvestedPaise)
+    : null;
 
-    loadData();
-
-    return () => {
-      active = false;
-    };
-  }, [isAuthenticated]);
+  const totalPnlRupees = summary
+    ? paiseToRupees(summary.totalPnlPaise)
+    : null;
 
   return (
     <div className="summary-page-container">
@@ -63,7 +54,7 @@ export const Summary: React.FC = () => {
             <p className="greeting-sub">
               {isAuthenticated
                 ? account
-                  ? `Practice Account #${account.accountNumber} • Active`
+                  ? `Practice Account #${account.accountNumber} • Status: ${account.status}`
                   : "Authenticated Practice Session"
                 : "Simulation Mode • Configure in-memory Dev Token to view live account records"}
             </p>
@@ -82,17 +73,9 @@ export const Summary: React.FC = () => {
             <div className="card-body">
               <div className="primary-metric">
                 <span className="metric-large">
-                  {summary
-                    ? `₹${(summary.cashBalancePaise / 100).toLocaleString("en-IN", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}`
-                    : account
-                    ? `₹${(account.virtualBalancePaise / 100).toLocaleString("en-IN", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}`
-                    : "₹10,00,000.00"}
+                  {cashBalanceRupees !== null
+                    ? `₹${formatRupees(cashBalanceRupees)}`
+                    : "—"}
                 </span>
                 <span className="metric-caption">Available Cash Margin</span>
               </div>
@@ -101,17 +84,18 @@ export const Summary: React.FC = () => {
                 <div className="metric-row">
                   <span className="label">Margins used</span>
                   <span className="value">
-                    {summary
-                      ? `₹${(summary.totalInvestedPaise / 100).toLocaleString("en-IN", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}`
-                      : "₹0.00"}
+                    {usedMarginRupees !== null
+                      ? `₹${formatRupees(usedMarginRupees)}`
+                      : "—"}
                   </span>
                 </div>
                 <div className="metric-row">
                   <span className="label">Opening balance</span>
-                  <span className="value">₹10,00,000.00</span>
+                  <span className="value">
+                    {openingBalanceRupees !== null
+                      ? `₹${formatRupees(openingBalanceRupees)}`
+                      : "—"}
+                  </span>
                 </div>
               </div>
             </div>
@@ -129,15 +113,14 @@ export const Summary: React.FC = () => {
               <div className="primary-metric">
                 <span
                   className={`metric-large ${
-                    summary && summary.totalPnlPaise < 0 ? "negative" : "positive"
+                    totalPnlRupees !== null && totalPnlRupees < 0
+                      ? "negative"
+                      : "positive"
                   }`}
                 >
-                  {summary
-                    ? `₹${(summary.totalPnlPaise / 100).toLocaleString("en-IN", {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })}`
-                    : "₹0.00"}
+                  {totalPnlRupees !== null
+                    ? `${totalPnlRupees > 0 ? "+" : ""}₹${formatRupees(totalPnlRupees)}`
+                    : "—"}
                 </span>
                 <span className="metric-caption">Total Realized + Unrealized P&L</span>
               </div>
@@ -146,23 +129,17 @@ export const Summary: React.FC = () => {
                 <div className="metric-row">
                   <span className="label">Current Value</span>
                   <span className="value">
-                    {summary
-                      ? `₹${(summary.currentMarketValuePaise / 100).toLocaleString("en-IN", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}`
-                      : "₹0.00"}
+                    {currentMarketValueRupees !== null
+                      ? `₹${formatRupees(currentMarketValueRupees)}`
+                      : "—"}
                   </span>
                 </div>
                 <div className="metric-row">
                   <span className="label">Total Invested</span>
                   <span className="value">
-                    {summary
-                      ? `₹${(summary.totalInvestedPaise / 100).toLocaleString("en-IN", {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}`
-                      : "₹0.00"}
+                    {totalInvestedRupees !== null
+                      ? `₹${formatRupees(totalInvestedRupees)}`
+                      : "—"}
                   </span>
                 </div>
               </div>

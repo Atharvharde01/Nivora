@@ -6,6 +6,9 @@ import {
   API_TIMEOUT_MS,
   WatchlistApi,
   InstrumentsApi,
+  OrdersApi,
+  PortfolioApi,
+  AccountsApi,
 } from "../client";
 
 describe("API Client Configuration & Interceptors", () => {
@@ -151,6 +154,90 @@ describe("API Client Configuration & Interceptors", () => {
         params: { search: "reliance", isTradable: true, page: 1, limit: 10 },
         signal: controller.signal,
       });
+    });
+  });
+
+  describe("OrdersApi, PortfolioApi & AccountsApi Corrected Endpoints", () => {
+    test("OrdersApi.placeOrder sends POST /api/v1/orders with Idempotency-Key header and clean payload", async () => {
+      const postSpy = jest.spyOn(apiClient, "post").mockResolvedValue({
+        data: {
+          success: true,
+          data: {
+            status: "EXECUTED",
+            wasIdempotentReplay: false,
+            order: { _id: "ord-1", status: "EXECUTED" },
+            trade: { _id: "trd-1" },
+          },
+        },
+      });
+
+      const payload = {
+        instrumentId: "664000000000000000000010",
+        side: "BUY" as const,
+        quantity: 5,
+      };
+      const idempotencyKey = "test-idempotency-key-12345";
+
+      const res = await OrdersApi.placeOrder(payload, idempotencyKey);
+      expect(postSpy).toHaveBeenCalledWith("/api/v1/orders", payload, {
+        headers: {
+          "Idempotency-Key": idempotencyKey,
+        },
+      });
+      expect(res.data?.status).toBe("EXECUTED");
+    });
+
+    test("OrdersApi.getOrders calls GET /api/v1/orders with query parameters", async () => {
+      const getSpy = jest.spyOn(apiClient, "get").mockResolvedValue({
+        data: {
+          success: true,
+          data: { items: [] },
+        },
+      });
+
+      await OrdersApi.getOrders({ page: 2, limit: 10 });
+      expect(getSpy).toHaveBeenCalledWith("/api/v1/orders", {
+        params: { page: 2, limit: 10 },
+      });
+    });
+
+    test("PortfolioApi.getPortfolio calls GET /api/v1/portfolio", async () => {
+      const getSpy = jest.spyOn(apiClient, "get").mockResolvedValue({
+        data: {
+          success: true,
+          data: {
+            practiceAccountId: "acc-1",
+            summary: { cashBalancePaise: 100000000 },
+            positions: [],
+            activePositionsCount: 0,
+          },
+        },
+      });
+
+      const res = await PortfolioApi.getPortfolio();
+      expect(getSpy).toHaveBeenCalledWith("/api/v1/portfolio", {
+        params: undefined,
+      });
+      expect(res.data?.practiceAccountId).toBe("acc-1");
+    });
+
+    test("AccountsApi.getActiveAccount calls GET /api/v1/accounts/active", async () => {
+      const getSpy = jest.spyOn(apiClient, "get").mockResolvedValue({
+        data: {
+          success: true,
+          data: {
+            account: {
+              accountId: "acc-1",
+              accountNumber: 1001,
+              cashBalancePaise: 100000000,
+            },
+          },
+        },
+      });
+
+      const res = await AccountsApi.getActiveAccount();
+      expect(getSpy).toHaveBeenCalledWith("/api/v1/accounts/active");
+      expect(res.data?.account.accountNumber).toBe(1001);
     });
   });
 });
