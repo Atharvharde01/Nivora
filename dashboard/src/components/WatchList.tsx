@@ -126,6 +126,15 @@ export const WatchList: React.FC = () => {
   const isMutatingRef = useRef<boolean>(false);
   const [isMutating, setIsMutating] = useState<boolean>(false);
 
+  // Synchronous auth-session generation tracking
+  const authSessionGenRef = useRef<number>(0);
+  const prevTokenRef = useRef<string | null>(token);
+
+  if (prevTokenRef.current !== token) {
+    prevTokenRef.current = token;
+    authSessionGenRef.current += 1;
+  }
+
   const [feedback, setFeedback] = useState<{
     type: "success" | "error";
     message: string;
@@ -156,6 +165,7 @@ export const WatchList: React.FC = () => {
   // Fetch user's real watchlist from backend with stale-response protection across auth changes
   const fetchWatchlist = useCallback(async () => {
     const currentReqId = ++watchlistRequestIdRef.current;
+    const sessionGen = authSessionGenRef.current;
 
     if (!isAuthenticated || !token) {
       setRemoteWatchlist([]);
@@ -167,6 +177,7 @@ export const WatchList: React.FC = () => {
       if (
         isMountedRef.current &&
         currentReqId === watchlistRequestIdRef.current &&
+        authSessionGenRef.current === sessionGen &&
         res.success &&
         res.data?.items
       ) {
@@ -289,9 +300,9 @@ export const WatchList: React.FC = () => {
     });
   };
 
-  // Add instrument to watchlist with global mutation lock
+  // Add instrument to watchlist with global mutation lock and auth-session guard
   const handleAddToWatchlist = async (item: InstrumentSummary) => {
-    if (!isAuthenticated) {
+    if (!isAuthenticated || !token) {
       setFeedback({ type: "error", message: "Please sign in to manage your watchlist." });
       return;
     }
@@ -302,21 +313,33 @@ export const WatchList: React.FC = () => {
     isMutatingRef.current = true;
     setIsMutating(true);
 
+    const sessionGen = authSessionGenRef.current;
+
     try {
       if (remoteWatchlist.some((w) => w.instrumentId === item._id)) {
-        setFeedback({ type: "error", message: "Instrument is already in your watchlist." });
+        if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
+          setFeedback({ type: "error", message: "Instrument is already in your watchlist." });
+        }
         return;
       }
 
       if (remoteWatchlist.length >= MAX_WATCHLIST_CAPACITY) {
-        setFeedback({
-          type: "error",
-          message: "Watchlist is full (max 50 instruments).",
-        });
+        if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
+          setFeedback({
+            type: "error",
+            message: "Watchlist is full (max 50 instruments).",
+          });
+        }
         return;
       }
 
       const res = await WatchlistApi.addItem(item._id);
+
+      // Verify component is still mounted and session generation is still current
+      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+        return;
+      }
+
       if (res.success && res.data?.item) {
         const newItem = res.data.item;
         setRemoteWatchlist((prev) => [...prev, newItem]);
@@ -343,19 +366,23 @@ export const WatchList: React.FC = () => {
         setFeedback({ type: "error", message: errorMsg });
       }
     } catch (err: unknown) {
-      setFeedback({
-        type: "error",
-        message: err instanceof Error ? err.message : "Failed to add instrument to watchlist.",
-      });
+      if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
+        setFeedback({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to add instrument to watchlist.",
+        });
+      }
     } finally {
       isMutatingRef.current = false;
-      setIsMutating(false);
+      if (isMountedRef.current) {
+        setIsMutating(false);
+      }
     }
   };
 
-  // Remove instrument from watchlist with global mutation lock (preserves workspace selection)
+  // Remove instrument from watchlist with global mutation lock and auth-session guard (preserves workspace selection)
   const handleRemoveFromWatchlist = async (instrumentId: string, symbol: string) => {
-    if (!isAuthenticated) return;
+    if (!isAuthenticated || !token) return;
 
     if (isMutatingRef.current) {
       return; // Prevent concurrent mutations
@@ -363,8 +390,16 @@ export const WatchList: React.FC = () => {
     isMutatingRef.current = true;
     setIsMutating(true);
 
+    const sessionGen = authSessionGenRef.current;
+
     try {
       const res = await WatchlistApi.removeItem(instrumentId);
+
+      // Verify component is still mounted and session generation is still current
+      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+        return;
+      }
+
       if (res.success) {
         const updated = remoteWatchlist.filter((w) => w.instrumentId !== instrumentId);
         setRemoteWatchlist(updated);
@@ -386,20 +421,25 @@ export const WatchList: React.FC = () => {
         });
       }
     } catch (err: unknown) {
-      setFeedback({
-        type: "error",
-        message: err instanceof Error ? err.message : "Failed to remove instrument from watchlist.",
-      });
+      if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
+        setFeedback({
+          type: "error",
+          message: err instanceof Error ? err.message : "Failed to remove instrument from watchlist.",
+        });
+      }
     } finally {
       isMutatingRef.current = false;
-      setIsMutating(false);
+      if (isMountedRef.current) {
+        setIsMutating(false);
+      }
     }
   };
 
-  // Reorder watchlist (sends complete ordered array of all instrument IDs with page rollback guard)
+  // Reorder watchlist (sends complete ordered array of all instrument IDs with page rollback and session guard)
   const handleReorder = async (fromFullIndex: number, toFullIndex: number) => {
     if (
       !isAuthenticated ||
+      !token ||
       fromFullIndex < 0 ||
       fromFullIndex >= remoteWatchlist.length ||
       toFullIndex < 0 ||
@@ -416,6 +456,7 @@ export const WatchList: React.FC = () => {
     isMutatingRef.current = true;
     setIsMutating(true);
 
+    const sessionGen = authSessionGenRef.current;
     const previousList = [...remoteWatchlist];
     const previousPage = activeTab;
 
@@ -435,6 +476,12 @@ export const WatchList: React.FC = () => {
     try {
       const instrumentIds = reorderedList.map((i) => i.instrumentId);
       const res = await WatchlistApi.reorder(instrumentIds);
+
+      // Verify component is still mounted and session generation is still current
+      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+        return;
+      }
+
       if (res.success) {
         // Sync with backend items if valid
         if (
@@ -445,7 +492,7 @@ export const WatchList: React.FC = () => {
           setRemoteWatchlist(res.data.items);
         }
       } else {
-        // Rollback both watchlist and active page
+        // Rollback both watchlist and active page (originating session only)
         setRemoteWatchlist(previousList);
         setActiveTab(previousPage);
         setFeedback({
@@ -454,16 +501,20 @@ export const WatchList: React.FC = () => {
         });
       }
     } catch {
-      // Rollback both watchlist and active page on exception
-      setRemoteWatchlist(previousList);
-      setActiveTab(previousPage);
-      setFeedback({
-        type: "error",
-        message: "Failed to reorder watchlist.",
-      });
+      // Rollback both watchlist and active page on exception (originating session only)
+      if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
+        setRemoteWatchlist(previousList);
+        setActiveTab(previousPage);
+        setFeedback({
+          type: "error",
+          message: "Failed to reorder watchlist.",
+        });
+      }
     } finally {
       isMutatingRef.current = false;
-      setIsMutating(false);
+      if (isMountedRef.current) {
+        setIsMutating(false);
+      }
     }
   };
 

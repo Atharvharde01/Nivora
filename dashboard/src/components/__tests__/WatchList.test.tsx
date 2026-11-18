@@ -1261,4 +1261,306 @@ describe("WatchList Component — Complete Marketwatch Test Suite", () => {
     expect(screen.queryByLabelText("Stale quote")).not.toBeInTheDocument();
     expect(screen.queryByText("STALE")).not.toBeInTheDocument();
   });
+
+  // ==================== AUTH SESSION MUTATION ISOLATION TESTS ====================
+
+  test("session isolation: ADD started in session A followed by logout does not repopulate watchlist", async () => {
+    let resolveAdd: (val: any) => void;
+    const addPromise = new Promise((resolve) => {
+      resolveAdd = resolve;
+    });
+    jest.spyOn(WatchlistApi, "addItem").mockImplementationOnce(() => addPromise as any);
+
+    jest.spyOn(InstrumentsApi, "search").mockResolvedValue({
+      success: true,
+      data: {
+        items: [mockSearchResult("inst-new", "NEWSTK", "New Stock Ltd")],
+        pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
+      },
+    });
+
+    renderWithProviders([]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    // Search for NEWSTK
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "newstk" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    // Click Add to watchlist (starts in session A)
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Add NEWSTK to watchlist"));
+    });
+
+    // User logs out before ADD resolves
+    await act(async () => {
+      fireEvent.click(screen.getByText("Logout"));
+    });
+
+    expect(screen.getByText("Watchlist is Empty")).toBeInTheDocument();
+
+    // Resolve the ADD response after logout
+    await act(async () => {
+      resolveAdd!({
+        success: true,
+        data: { item: createMockWatchlistItem(99, "NEWSTK") },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // The old result must NOT repopulate the watchlist or show feedback
+    expect(screen.queryByText("NEWSTK India Limited")).not.toBeInTheDocument();
+    expect(screen.queryByText("Added NEWSTK to watchlist.")).not.toBeInTheDocument();
+    expect(screen.getByText("Watchlist is Empty")).toBeInTheDocument();
+  });
+
+  test("session isolation: ADD started in session A followed by login as session B does not modify session B's watchlist", async () => {
+    let resolveAdd: (val: any) => void;
+    const addPromise = new Promise((resolve) => {
+      resolveAdd = resolve;
+    });
+    jest.spyOn(WatchlistApi, "addItem").mockImplementationOnce(() => addPromise as any);
+
+    jest.spyOn(InstrumentsApi, "search").mockResolvedValue({
+      success: true,
+      data: {
+        items: [mockSearchResult("inst-new", "USER_A_NEW", "User A New")],
+        pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
+      },
+    });
+
+    const watchlistSpy = jest.spyOn(WatchlistApi, "getWatchlist");
+    // Session A watchlist: empty
+    watchlistSpy.mockResolvedValueOnce({
+      success: true,
+      data: { items: [], count: 0 },
+    });
+    // Session B watchlist: USER_B_ITEM
+    watchlistSpy.mockResolvedValueOnce({
+      success: true,
+      data: { items: [createMockWatchlistItem(1, "USER_B_ITEM")], count: 1 },
+    });
+
+    render(
+      <BrowserRouter>
+        <AuthProvider>
+          <MarketProvider>
+            <AuthTrigger />
+            <WatchList />
+            <SelectedTester />
+          </MarketProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    );
+
+    // Login as Session A
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    // Search and click Add
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "user_a_new" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Add USER_A_NEW to watchlist"));
+    });
+
+    // Switch to Session B before ADD resolves
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login B"));
+    });
+
+    // Verify Session B's watchlist is displayed
+    expect(screen.getByText("USER_B_ITEM")).toBeInTheDocument();
+
+    // Resolve Session A's ADD response
+    await act(async () => {
+      resolveAdd!({
+        success: true,
+        data: { item: createMockWatchlistItem(99, "USER_A_NEW") },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Session B's watchlist must NOT contain USER_A_NEW and no stale feedback banner
+    expect(screen.getByText("USER_B_ITEM")).toBeInTheDocument();
+    expect(screen.queryByText("USER_A_NEW India Limited")).not.toBeInTheDocument();
+    expect(screen.queryByText("Added USER_A_NEW to watchlist.")).not.toBeInTheDocument();
+  });
+
+  test("session isolation: REMOVE started in session A followed by logout does not modify visible watchlist", async () => {
+    let resolveRemove: (val: any) => void;
+    const removePromise = new Promise((resolve) => {
+      resolveRemove = resolve;
+    });
+    jest.spyOn(WatchlistApi, "removeItem").mockImplementationOnce(() => removePromise as any);
+
+    const item = createMockWatchlistItem(1, "REMOVE_STK");
+    renderWithProviders([item]);
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    expect(screen.getByText("REMOVE_STK")).toBeInTheDocument();
+
+    // Click Remove
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Remove REMOVE_STK from watchlist"));
+    });
+
+    // User logs out before REMOVE resolves
+    await act(async () => {
+      fireEvent.click(screen.getByText("Logout"));
+    });
+
+    expect(screen.getByText("Watchlist is Empty")).toBeInTheDocument();
+
+    // Resolve the REMOVE response
+    await act(async () => {
+      resolveRemove!({
+        success: true,
+        data: { success: true, removedInstrumentId: "inst-1" },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Visible watchlist remains empty and no feedback
+    expect(screen.getByText("Watchlist is Empty")).toBeInTheDocument();
+    expect(screen.queryByText("Removed REMOVE_STK from watchlist.")).not.toBeInTheDocument();
+  });
+
+  test("session isolation: REORDER started in session A followed by login as session B does not modify session B's list or page", async () => {
+    let resolveReorder: (val: any) => void;
+    const reorderPromise = new Promise((resolve) => {
+      resolveReorder = resolve;
+    });
+    jest.spyOn(WatchlistApi, "reorder").mockImplementationOnce(() => reorderPromise as any);
+
+    const watchlistSpy = jest.spyOn(WatchlistApi, "getWatchlist");
+    // Session A list
+    watchlistSpy.mockResolvedValueOnce({
+      success: true,
+      data: {
+        items: [
+          createMockWatchlistItem(1, "USER_A_1"),
+          createMockWatchlistItem(2, "USER_A_2"),
+        ],
+        count: 2,
+      },
+    });
+    // Session B list
+    watchlistSpy.mockResolvedValueOnce({
+      success: true,
+      data: {
+        items: [createMockWatchlistItem(3, "USER_B_ONLY")],
+        count: 1,
+      },
+    });
+
+    render(
+      <BrowserRouter>
+        <AuthProvider>
+          <MarketProvider>
+            <AuthTrigger />
+            <WatchList />
+            <SelectedTester />
+          </MarketProvider>
+        </AuthProvider>
+      </BrowserRouter>
+    );
+
+    // Login as Session A
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    expect(screen.getByText("USER_A_1")).toBeInTheDocument();
+    expect(screen.getByText("USER_A_2")).toBeInTheDocument();
+
+    // Reorder in Session A (Move USER_A_1 down)
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Move USER_A_1 down"));
+    });
+
+    // Switch to Session B before REORDER resolves
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login B"));
+    });
+
+    expect(screen.getByText("USER_B_ONLY")).toBeInTheDocument();
+
+    // User A's reorder fails (triggering rollback logic in old session)
+    await act(async () => {
+      resolveReorder!({
+        success: false,
+        error: { code: "SERVER_ERROR", message: "User A reorder failed" },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // Session B's watchlist MUST remain USER_B_ONLY, not roll back to User A's items or show User A error
+    expect(screen.getByText("USER_B_ONLY")).toBeInTheDocument();
+    expect(screen.queryByText("USER_A_1")).not.toBeInTheDocument();
+    expect(screen.queryByText("USER_A_2")).not.toBeInTheDocument();
+    expect(screen.queryByText("User A reorder failed")).not.toBeInTheDocument();
+  });
+
+  test("session isolation: mutation lock is released after an obsolete-session response completes", async () => {
+    let resolveAdd: (val: any) => void;
+    const addPromise = new Promise((resolve) => {
+      resolveAdd = resolve;
+    });
+    jest.spyOn(WatchlistApi, "addItem").mockImplementationOnce(() => addPromise as any);
+
+    jest.spyOn(InstrumentsApi, "search").mockResolvedValue({
+      success: true,
+      data: {
+        items: [mockSearchResult("inst-new", "LOCK_STK", "Lock Stock Ltd")],
+        pagination: { page: 1, limit: 15, total: 1, totalPages: 1 },
+      },
+    });
+
+    renderWithProviders([]);
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login"));
+    });
+
+    // Search and click Add
+    const input = screen.getByPlaceholderText("Search eg: infy, bse, nifty, reliance");
+    await act(async () => {
+      fireEvent.change(input, { target: { value: "lock_stk" } });
+      await new Promise((r) => setTimeout(r, 300));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByLabelText("Add LOCK_STK to watchlist"));
+    });
+
+    // Switch session
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login B"));
+    });
+
+    // Resolve the obsolete ADD response
+    await act(async () => {
+      resolveAdd!({
+        success: true,
+        data: { item: createMockWatchlistItem(99, "LOCK_STK") },
+      });
+      await new Promise((r) => setTimeout(r, 10));
+    });
+
+    // The add button in search results should be re-enabled (mutation lock released!)
+    const addBtn = screen.getByLabelText("Add LOCK_STK to watchlist");
+    expect(addBtn).not.toBeDisabled();
+  });
 });
