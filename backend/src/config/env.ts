@@ -1,5 +1,8 @@
 export type NodeEnvironment = "development" | "test" | "production";
 
+export const DEV_HOPPSCOTCH_EXTENSION_ORIGIN =
+  "chrome-extension://amknoiejhlmhancpahfcfchflgkpbld" as const;
+
 export interface EnvConfig {
   nodeEnv: NodeEnvironment;
   isProduction: boolean;
@@ -804,9 +807,11 @@ export function loadEnvConfig(
     throw new EnvConfigValidationError(errors);
   }
 
-  const allowedOrigins = Object.freeze(
-    Array.from(new Set([frontendResult.origin, dashboardResult.origin]))
-  );
+  const rawAllowedOrigins = [frontendResult.origin, dashboardResult.origin];
+  if (nodeEnvResult.value === "development") {
+    rawAllowedOrigins.push(DEV_HOPPSCOTCH_EXTENSION_ORIGIN);
+  }
+  const allowedOrigins = Object.freeze(Array.from(new Set(rawAllowedOrigins)));
 
   let trustProxy: boolean | number | string = false;
   if (env.TRUST_PROXY !== undefined && env.TRUST_PROXY.trim() !== "") {

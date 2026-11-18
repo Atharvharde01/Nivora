@@ -13,7 +13,8 @@
     "test": "npm run test:all",
     "smoke-test": "tsx scripts/smoke-test.ts",
     "db:init": "tsx scripts/db-init.ts",
-    "db:seed:instruments": "tsx scripts/seed-instruments.ts"
+    "db:seed:instruments": "tsx scripts/seed-instruments.ts",
+    "db:seed:market-history": "tsx scripts/seed-market-history.ts"
   },
   "author": "",
   "license": "ISC",

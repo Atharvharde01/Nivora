@@ -61,6 +61,12 @@ describe("Task 33 — OpenAPI 3.1 Documentation & Swagger UI (Unit)", () => {
       "/api/v1/accounts/{accountId}",
       "/api/v1/accounts/{accountId}/ledger",
       "/api/v1/accounts/reset",
+
+      // Market Indices & Historical Candles (4)
+      "/api/v1/market/indices",
+      "/api/v1/market/indices/{symbol}",
+      "/api/v1/market/indices/{symbol}/candles",
+      "/api/v1/market/instruments/{instrumentId}/candles",
     ];
 
     for (const p of requiredPaths) {
@@ -70,7 +76,7 @@ describe("Task 33 — OpenAPI 3.1 Documentation & Swagger UI (Unit)", () => {
       );
     }
 
-    assert.ok(Object.keys(paths).length >= 24);
+    assert.ok(Object.keys(paths).length >= 28);
   });
 
   it("defines required security schemes and paise-based financial models", () => {
@@ -89,6 +95,10 @@ describe("Task 33 — OpenAPI 3.1 Documentation & Swagger UI (Unit)", () => {
     assert.ok(schemas.Session);
     assert.ok(schemas.Instrument);
     assert.ok(schemas.Quote);
+    assert.ok(schemas.MarketIndex);
+    assert.ok(schemas.MarketIndexConstituent);
+    assert.ok(schemas.MarketCandle);
+    assert.ok(schemas.MarketIndexCandle);
     assert.ok(schemas.Order);
     assert.ok(schemas.Trade);
     assert.ok(schemas.Holding);
@@ -97,9 +107,12 @@ describe("Task 33 — OpenAPI 3.1 Documentation & Swagger UI (Unit)", () => {
     assert.ok(schemas.PracticeAccount);
     assert.ok(schemas.LedgerEntry);
 
-    // Verify Integer Paise documentation
+    // Verify Integer Paise & Fixed-Point Index documentation
     assert.equal(schemas.Quote.properties.bidPricePaise.type, "integer");
     assert.equal(schemas.Quote.properties.askPricePaise.type, "integer");
+    assert.equal(schemas.MarketIndex.properties.currentValue.type, "integer");
+    assert.equal(schemas.MarketCandle.properties.closePaise.type, "integer");
+    assert.equal(schemas.MarketIndexCandle.properties.closeValue.type, "integer");
     assert.equal(schemas.Order.properties.executionPricePaise.type, "integer");
     assert.equal(schemas.Trade.properties.totalValuePaise.type, "integer");
     assert.equal(schemas.Holding.properties.averageBuyPricePaise.type, "integer");

@@ -57,11 +57,11 @@ describe("Milestone 2 — Database Initialization & Non-Destructive Indexes (Int
 
     assert.equal(result.databaseName, "Nivora");
     assert.equal(result.transactionsSupported, true);
-    assert.equal(result.totalCollectionsCount, 11);
-    assert.equal(result.collectionsCreatedCount, 11);
+    assert.equal(result.totalCollectionsCount, REGISTERED_NIVORA_MODELS.length);
+    assert.equal(result.collectionsCreatedCount, REGISTERED_NIVORA_MODELS.length);
     assert.equal(result.collectionsPreservedCount, 0);
 
-    // Verify all 11 collections exist and have document count 0
+    // Verify all registered collections exist and have document count 0
     for (const report of result.collectionReports) {
       assert.equal(report.documentCount, 0, `Collection ${report.collectionName} must have 0 documents`);
       assert.ok(report.indexes.length >= 2, `Collection ${report.collectionName} must have at least _id_ + 1 declared index`);
@@ -94,7 +94,7 @@ describe("Milestone 2 — Database Initialization & Non-Destructive Indexes (Int
     });
 
     assert.equal(idempotentResult.collectionsCreatedCount, 0, "Second run should create 0 new collections");
-    assert.equal(idempotentResult.collectionsPreservedCount, 11, "Second run should preserve all 11 collections");
+    assert.equal(idempotentResult.collectionsPreservedCount, REGISTERED_NIVORA_MODELS.length, "Second run should preserve all collections");
 
     // Clean up connection
     await mongoose.disconnect();

@@ -4,7 +4,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
-import { loadEnvConfig, EnvConfigValidationError } from "../../config/env";
+import {
+  DEV_HOPPSCOTCH_EXTENSION_ORIGIN,
+  loadEnvConfig,
+  EnvConfigValidationError,
+} from "../../config/env";
 import { createApp } from "../../app";
 import {
   discoverIntegrationTestFiles,
@@ -205,5 +209,147 @@ describe("Task 34 — Production Deployment Readiness (Unit)", () => {
       () => discoverUnitTestFiles(path.resolve(process.cwd(), "nonexistent-dir")),
       /TEST_DISCOVERY_ERROR/
     );
+  });
+
+  it("allows Hoppscotch Chrome extension origin in development CORS while preserving frontend/dashboard origins and blocking it in production", async () => {
+    const devConfig = loadEnvConfig({
+      NODE_ENV: "development",
+      PORT: "5000",
+      MONGO_URL: "mongodb://localhost:27017/Nivora",
+      FRONTEND_URL: "http://localhost:3000",
+      DASHBOARD_URL: "http://localhost:3001",
+    });
+
+    assert.ok(devConfig.allowedOrigins.includes("http://localhost:3000"));
+    assert.ok(devConfig.allowedOrigins.includes("http://localhost:3001"));
+    assert.ok(
+      devConfig.allowedOrigins.includes(DEV_HOPPSCOTCH_EXTENSION_ORIGIN)
+    );
+    assert.ok(!devConfig.allowedOrigins.includes("*"));
+
+    const testEnvConfig = loadEnvConfig({
+      NODE_ENV: "test",
+      PORT: "5000",
+      MONGO_URL: "mongodb://localhost:27017/nivora_test",
+      FRONTEND_URL: "http://localhost:3000",
+      DASHBOARD_URL: "http://localhost:3001",
+    });
+    assert.ok(
+      !testEnvConfig.allowedOrigins.includes(DEV_HOPPSCOTCH_EXTENSION_ORIGIN)
+    );
+
+    const prodConfig = loadEnvConfig({
+      NODE_ENV: "production",
+      PORT: "5000",
+      MONGO_URL: "mongodb+srv://user:pass@cluster.mongodb.net/Nivora",
+      FRONTEND_URL: "https://app.nivora.in",
+      DASHBOARD_URL: "https://dashboard.nivora.in",
+      OTP_HMAC_SECRET: "valid_production_otp_hmac_secret_32_chars_ok!",
+      BREVO_API_KEY: "xkeysib-test-key-valid",
+      BREVO_SENDER_EMAIL: "noreply@nivora.in",
+      JWT_ACCESS_SECRET: "valid_production_jwt_access_secret_32_chars_ok!",
+    });
+    assert.ok(prodConfig.allowedOrigins.includes("https://app.nivora.in"));
+    assert.ok(prodConfig.allowedOrigins.includes("https://dashboard.nivora.in"));
+    assert.ok(
+      !prodConfig.allowedOrigins.includes(DEV_HOPPSCOTCH_EXTENSION_ORIGIN)
+    );
+
+    // 1. Development HTTP app allows frontend, dashboard, and Hoppscotch extension
+    const devApp = createApp({
+      isProduction: devConfig.isProduction,
+      allowedOrigins: devConfig.allowedOrigins,
+      enableSwagger: false,
+    });
+    const devServer = http.createServer(devApp);
+    await new Promise<void>((resolve) => devServer.listen(0, resolve));
+    const devPort = (devServer.address() as any).port;
+    const devBaseUrl = `http://127.0.0.1:${devPort}`;
+
+    try {
+      for (const allowedOrigin of [
+        "http://localhost:3000",
+        "http://localhost:3001",
+        DEV_HOPPSCOTCH_EXTENSION_ORIGIN,
+      ]) {
+        const res = await fetch(`${devBaseUrl}/health/live`, {
+          headers: { Origin: allowedOrigin },
+        });
+        assert.equal(
+          res.status,
+          200,
+          `Expected 200 for allowed dev origin ${allowedOrigin}`
+        );
+        assert.equal(
+          res.headers.get("access-control-allow-origin"),
+          allowedOrigin
+        );
+        assert.equal(
+          res.headers.get("access-control-allow-credentials"),
+          "true"
+        );
+      }
+
+      const preflightRes = await fetch(`${devBaseUrl}/health/live`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: DEV_HOPPSCOTCH_EXTENSION_ORIGIN,
+          "Access-Control-Request-Method": "GET",
+          "Access-Control-Request-Headers": "Authorization,Content-Type",
+        },
+      });
+      assert.equal(preflightRes.status, 204);
+      assert.equal(
+        preflightRes.headers.get("access-control-allow-origin"),
+        DEV_HOPPSCOTCH_EXTENSION_ORIGIN
+      );
+
+      const unknownDevRes = await fetch(`${devBaseUrl}/health/live`, {
+        headers: { Origin: "https://unauthorized.example" },
+      });
+      assert.equal(unknownDevRes.status, 403);
+    } finally {
+      await new Promise<void>((resolve) => devServer.close(() => resolve()));
+    }
+
+    // 2. Production HTTP app allows frontend/dashboard and strictly rejects Hoppscotch extension
+    // even if explicitly passed in allowedOrigins
+    const prodApp = createApp({
+      isProduction: true,
+      allowedOrigins: [
+        ...prodConfig.allowedOrigins,
+        DEV_HOPPSCOTCH_EXTENSION_ORIGIN,
+      ],
+      enableSwagger: false,
+    });
+    const prodServer = http.createServer(prodApp);
+    await new Promise<void>((resolve) => prodServer.listen(0, resolve));
+    const prodPort = (prodServer.address() as any).port;
+    const prodBaseUrl = `http://127.0.0.1:${prodPort}`;
+
+    try {
+      for (const allowedProdOrigin of [
+        "https://app.nivora.in",
+        "https://dashboard.nivora.in",
+      ]) {
+        const res = await fetch(`${prodBaseUrl}/health/live`, {
+          headers: { Origin: allowedProdOrigin },
+        });
+        assert.equal(res.status, 200);
+        assert.equal(
+          res.headers.get("access-control-allow-origin"),
+          allowedProdOrigin
+        );
+      }
+
+      const blockedExtRes = await fetch(`${prodBaseUrl}/health/live`, {
+        headers: { Origin: DEV_HOPPSCOTCH_EXTENSION_ORIGIN },
+      });
+      assert.equal(blockedExtRes.status, 403);
+      const blockedBody = (await blockedExtRes.json()) as { error: string };
+      assert.ok(blockedBody.error.includes("CORS blocked"));
+    } finally {
+      await new Promise<void>((resolve) => prodServer.close(() => resolve()));
+    }
   });
 });

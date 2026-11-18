@@ -5,12 +5,12 @@ import {
   runDatabaseInitialization,
 } from "../../../scripts/db-init";
 
-describe("Milestone 2 — Database Initialization & Model Inventory (Unit)", () => {
-  it("registers exactly 11 NIVORA Mongoose models with expected collection names", () => {
+describe("Milestone 2 & 4 — Database Initialization & Model Inventory (Unit)", () => {
+  it("registers all 14 NIVORA Mongoose models with expected collection names", () => {
     assert.equal(
       REGISTERED_NIVORA_MODELS.length,
-      11,
-      "Expected exactly 11 registered NIVORA models"
+      14,
+      "Expected exactly 14 registered NIVORA models"
     );
 
     const expectedMap: Record<string, string> = {
@@ -25,6 +25,9 @@ describe("Milestone 2 — Database Initialization & Model Inventory (Unit)", () 
       Trade: "trades",
       Holding: "holdings",
       LedgerEntry: "ledger_entries",
+      MarketIndex: "market_indices",
+      MarketCandle: "market_candles",
+      MarketIndexCandle: "market_index_candles",
     };
 
     for (const reg of REGISTERED_NIVORA_MODELS) {
@@ -122,6 +125,48 @@ describe("Milestone 2 — Database Initialization & Model Inventory (Unit)", () 
         ([k, opt]) => k.practiceAccountId === 1 && k.idempotencyKey === 1 && opt?.unique === true
       ),
       "LedgerEntry model must define unique idempotency key index per practice account"
+    );
+
+    // 8. MarketIndex: unique symbol
+    const marketIndexModel = REGISTERED_NIVORA_MODELS.find(
+      (m) => m.modelName === "MarketIndex"
+    )!.model;
+    const marketIndexIndexes = marketIndexModel.schema.indexes();
+    assert.ok(
+      marketIndexIndexes.some(([k, opt]) => k.symbol === 1 && opt?.unique === true),
+      "MarketIndex model must define unique index on symbol"
+    );
+
+    // 9. MarketCandle: unique instrumentId + interval + openTime
+    const marketCandleModel = REGISTERED_NIVORA_MODELS.find(
+      (m) => m.modelName === "MarketCandle"
+    )!.model;
+    const marketCandleIndexes = marketCandleModel.schema.indexes();
+    assert.ok(
+      marketCandleIndexes.some(
+        ([k, opt]) =>
+          k.instrumentId === 1 &&
+          k.interval === 1 &&
+          k.openTime === 1 &&
+          opt?.unique === true
+      ),
+      "MarketCandle model must define unique compound index on instrumentId + interval + openTime"
+    );
+
+    // 10. MarketIndexCandle: unique indexId + interval + openTime
+    const marketIndexCandleModel = REGISTERED_NIVORA_MODELS.find(
+      (m) => m.modelName === "MarketIndexCandle"
+    )!.model;
+    const marketIndexCandleIndexes = marketIndexCandleModel.schema.indexes();
+    assert.ok(
+      marketIndexCandleIndexes.some(
+        ([k, opt]) =>
+          k.indexId === 1 &&
+          k.interval === 1 &&
+          k.openTime === 1 &&
+          opt?.unique === true
+      ),
+      "MarketIndexCandle model must define unique compound index on indexId + interval + openTime"
     );
   });
 

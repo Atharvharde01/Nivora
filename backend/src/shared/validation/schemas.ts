@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Types } from "mongoose";
+import { parseMarketQueryDate } from "../../modules/market-candles/market-candle.utils";
 
 export const OBJECT_ID_HEX_REGEX = /^[0-9a-fA-F]{24}$/;
 export const IDEMPOTENCY_KEY_REGEX = /^[a-zA-Z0-9_\-:.]{8,128}$/;
@@ -145,7 +146,6 @@ export const dateRangeQuerySchema = z
       path: ["from"],
     }
   );
-
 /**
  * Safe search string schema (max 100 chars, trimmed).
  */
@@ -270,7 +270,6 @@ export const listTradesQuerySchema = z
       path: ["from"],
     }
   );
-
 export const tradeIdParamsSchema = z.object({
   tradeId: objectIdSchema,
 });
@@ -313,7 +312,6 @@ export const listLedgerQuerySchema = z
       path: ["from"],
     }
   );
-
 export const resetAccountBodySchema = z
   .object({
     confirmation: z.literal("RESET_PRACTICE_ACCOUNT", {
@@ -322,3 +320,84 @@ export const resetAccountBodySchema = z
     expectedActiveAccountId: objectIdSchema,
   })
   .strict();
+
+// --- Market Indices & Candles Schemas ---
+export const candleIntervalSchema = z.enum(
+  ["1m", "5m", "15m", "1h", "1d"] as const,
+  {
+    message: "interval must be one of: '1m', '5m', '15m', '1h', '1d'.",
+  }
+);
+
+export const marketIndexSymbolParamsSchema = z.object({
+  symbol: z
+    .string()
+    .trim()
+    .min(1, "Market index symbol is required.")
+    .max(30, "Market index symbol cannot exceed 30 characters.")
+    .transform((val) => val.toUpperCase().replace(/[\s_-]+/g, ""))
+    .refine(
+      (val) =>
+        val === "NIFTY50" ||
+        val === "NIFTY" ||
+        val === "SENSEX" ||
+        val === "BSESENSEX",
+      {
+        message:
+          "Unsupported market index symbol. Supported symbols: NIFTY50, SENSEX.",
+      }
+    )
+    .transform((val) =>
+      val === "NIFTY" ? "NIFTY50" : val === "BSESENSEX" ? "SENSEX" : val
+    ),
+});
+
+export const marketCandlesQuerySchema = z
+  .object({
+    interval: candleIntervalSchema.optional().default("1d"),
+    from: z
+      .string()
+      .optional()
+      .refine(
+        (val) => !val || parseMarketQueryDate(val, "start") !== null,
+        "from must be a valid ISO 8601 date or date-time string."
+      ),
+    to: z
+      .string()
+      .optional()
+      .refine(
+        (val) => !val || parseMarketQueryDate(val, "end") !== null,
+        "to must be a valid ISO 8601 date or date-time string."
+      ),
+    limit: z.preprocess(
+      (val) => {
+        if (val === undefined || val === null || val === "") return 100;
+        if (typeof val === "string") {
+          const num = Number(val);
+          return Number.isSafeInteger(num) ? num : NaN;
+        }
+        return val;
+      },
+      z
+        .number()
+        .int("Limit must be an integer.")
+        .min(1, "Limit must be at least 1.")
+        .max(500, "Limit cannot exceed 500.")
+        .default(100)
+    ),
+  })
+  .refine(
+    (data) => {
+      if (data.from && data.to) {
+        const parsedFrom = parseMarketQueryDate(data.from, "start");
+        const parsedTo = parseMarketQueryDate(data.to, "end");
+        if (!parsedFrom || !parsedTo) return false;
+        return parsedFrom.getTime() <= parsedTo.getTime();
+      }
+      return true;
+    },
+    {
+      message: "from date must be earlier than or equal to to date.",
+      path: ["from"],
+    }
+  );

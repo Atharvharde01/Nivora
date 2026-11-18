@@ -14,6 +14,9 @@ import { OrderModel, ORDER_COLLECTION_NAME, ORDER_MODEL_NAME } from "../src/modu
 import { TradeModel, TRADE_COLLECTION_NAME, TRADE_MODEL_NAME } from "../src/modules/trades/trade.model";
 import { HoldingModel, HOLDING_COLLECTION_NAME, HOLDING_MODEL_NAME } from "../src/modules/holdings/holding.model";
 import { LedgerEntryModel, LEDGER_ENTRY_COLLECTION_NAME, LEDGER_ENTRY_MODEL_NAME } from "../src/modules/ledger/ledger.model";
+import { MarketIndexModel, MARKET_INDEX_COLLECTION_NAME, MARKET_INDEX_MODEL_NAME } from "../src/modules/market-indices/market-index.model";
+import { MarketCandleModel, MARKET_CANDLE_COLLECTION_NAME, MARKET_CANDLE_MODEL_NAME } from "../src/modules/market-candles/market-candle.model";
+import { MarketIndexCandleModel, MARKET_INDEX_CANDLE_COLLECTION_NAME, MARKET_INDEX_CANDLE_MODEL_NAME } from "../src/modules/market-candles/market-index-candle.model";
 
 export interface ModelRegistration {
   readonly modelName: string;
@@ -33,6 +36,9 @@ export const REGISTERED_NIVORA_MODELS: readonly ModelRegistration[] = Object.fre
   { modelName: TRADE_MODEL_NAME, collectionName: TRADE_COLLECTION_NAME, model: TradeModel },
   { modelName: HOLDING_MODEL_NAME, collectionName: HOLDING_COLLECTION_NAME, model: HoldingModel },
   { modelName: LEDGER_ENTRY_MODEL_NAME, collectionName: LEDGER_ENTRY_COLLECTION_NAME, model: LedgerEntryModel },
+  { modelName: MARKET_INDEX_MODEL_NAME, collectionName: MARKET_INDEX_COLLECTION_NAME, model: MarketIndexModel },
+  { modelName: MARKET_CANDLE_MODEL_NAME, collectionName: MARKET_CANDLE_COLLECTION_NAME, model: MarketCandleModel },
+  { modelName: MARKET_INDEX_CANDLE_MODEL_NAME, collectionName: MARKET_INDEX_CANDLE_COLLECTION_NAME, model: MarketIndexCandleModel },
 ]);
 
 export interface IndexAuditInfo {

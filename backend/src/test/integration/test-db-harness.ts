@@ -19,6 +19,9 @@ import { WatchlistItemModel } from "../../modules/watchlist/watchlist.model";
 import { OtpChallengeModel } from "../../modules/auth/otp-challenge.model";
 import { SessionModel } from "../../modules/auth/session.model";
 import { RefreshTokenModel } from "../../modules/auth/refresh-token.model";
+import { MarketIndexModel } from "../../modules/market-indices/market-index.model";
+import { MarketCandleModel } from "../../modules/market-candles/market-candle.model";
+import { MarketIndexCandleModel } from "../../modules/market-candles/market-index-candle.model";
 
 const DEFAULT_WINDOWS_MONGOD_PATH =
   "C:\\Program Files\\MongoDB\\Server\\8.2\\bin\\mongod.exe";
@@ -222,6 +225,9 @@ export async function setupIntegrationTestDb(): Promise<string> {
     OtpChallengeModel.createCollection(),
     SessionModel.createCollection(),
     RefreshTokenModel.createCollection(),
+    MarketIndexModel.createCollection(),
+    MarketCandleModel.createCollection(),
+    MarketIndexCandleModel.createCollection(),
   ]);
 
   await verifyTransactionCapability();
@@ -250,6 +256,9 @@ export async function clearDatabase(): Promise<void> {
     OtpChallengeModel.deleteMany({}),
     SessionModel.deleteMany({}),
     RefreshTokenModel.deleteMany({}),
+    MarketIndexModel.deleteMany({}),
+    MarketCandleModel.deleteMany({}),
+    MarketIndexCandleModel.deleteMany({}),
   ]);
 }
 

@@ -15,11 +15,14 @@ import { TradeController } from "../modules/trades/trade.controller";
 import { createTradeRouter } from "../modules/trades/trade.routes";
 import { AccountController } from "../modules/practice-accounts/account.controller";
 import { createAccountRouter } from "../modules/practice-accounts/account.routes";
+import { MarketDataController } from "../modules/market-indices/market-data.controller";
+import { createMarketDataRouter } from "../modules/market-indices/market-data.routes";
 
 export interface AppRouterDependencies {
   authDependencies: AuthRouterDependencies;
   jwtService?: JwtService;
   instrumentController?: InstrumentController;
+  marketDataController?: MarketDataController;
   watchlistController?: WatchlistController;
   orderController?: OrderController;
   portfolioController?: PortfolioController;
@@ -46,6 +49,8 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
 
   const instrumentController =
     dependencies.instrumentController ?? new InstrumentController();
+  const marketDataController =
+    dependencies.marketDataController ?? new MarketDataController();
   const watchlistController =
     dependencies.watchlistController ??
     new WatchlistController({ watchlistService: new WatchlistService() });
@@ -62,6 +67,11 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
     "/instruments",
     authMiddleware,
     createInstrumentRouter(instrumentController)
+  );
+  apiV1Router.use(
+    "/market",
+    authMiddleware,
+    createMarketDataRouter(marketDataController)
   );
   apiV1Router.use(
     "/watchlist",
