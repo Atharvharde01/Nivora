@@ -256,6 +256,12 @@ export interface WatchlistItemDto {
 
 export interface WatchlistResult {
   items: WatchlistItemDto[];
+  count: number;
+}
+
+export interface RemoveWatchlistItemResult {
+  success: boolean;
+  removedInstrumentId: string;
 }
 
 // ==================== ORDERS & TRADES ====================

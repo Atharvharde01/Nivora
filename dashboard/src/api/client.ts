@@ -24,6 +24,7 @@ import {
   TradesListResult,
   WatchlistItemDto,
   WatchlistResult,
+  RemoveWatchlistItemResult,
 } from "./types";
 
 export const DEFAULT_API_URL = "http://localhost:5000";
@@ -136,10 +137,13 @@ export const MarketApi = {
 
 export const InstrumentsApi = {
   /** Search instruments with pagination & filters */
-  async search(params?: SearchInstrumentsParams): Promise<ApiResponse<SearchInstrumentsResult>> {
+  async search(
+    params?: SearchInstrumentsParams,
+    config?: { signal?: AbortSignal }
+  ): Promise<ApiResponse<SearchInstrumentsResult>> {
     const res = await apiClient.get<ApiResponse<SearchInstrumentsResult>>(
       "/api/v1/instruments",
-      { params }
+      { params, signal: config?.signal }
     );
     return res.data;
   },
@@ -171,16 +175,27 @@ export const WatchlistApi = {
   /** Add an instrument to user's watchlist */
   async addItem(instrumentId: string): Promise<ApiResponse<{ item: WatchlistItemDto }>> {
     const res = await apiClient.post<ApiResponse<{ item: WatchlistItemDto }>>(
-      "/api/v1/watchlist",
+      "/api/v1/watchlist/items",
       { instrumentId }
     );
     return res.data;
   },
 
   /** Remove an instrument from user's watchlist */
-  async removeItem(instrumentId: string): Promise<ApiResponse<{ success: boolean }>> {
-    const res = await apiClient.delete<ApiResponse<{ success: boolean }>>(
-      `/api/v1/watchlist/${encodeURIComponent(instrumentId)}`
+  async removeItem(
+    instrumentId: string
+  ): Promise<ApiResponse<RemoveWatchlistItemResult>> {
+    const res = await apiClient.delete<ApiResponse<RemoveWatchlistItemResult>>(
+      `/api/v1/watchlist/items/${encodeURIComponent(instrumentId)}`
+    );
+    return res.data;
+  },
+
+  /** Reorder user's watchlist items */
+  async reorder(instrumentIds: string[]): Promise<ApiResponse<WatchlistResult>> {
+    const res = await apiClient.patch<ApiResponse<WatchlistResult>>(
+      "/api/v1/watchlist/reorder",
+      { instrumentIds }
     );
     return res.data;
   },

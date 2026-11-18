@@ -4,12 +4,15 @@ import {
   setOnUnauthorized,
   DEFAULT_API_URL,
   API_TIMEOUT_MS,
+  WatchlistApi,
+  InstrumentsApi,
 } from "../client";
 
 describe("API Client Configuration & Interceptors", () => {
   afterEach(() => {
     setTokenGetter(() => null);
     setOnUnauthorized(() => {});
+    jest.restoreAllMocks();
   });
 
   test("configures default baseURL and timeout", () => {
@@ -63,5 +66,91 @@ describe("API Client Configuration & Interceptors", () => {
 
     expect(() => interceptor.rejected(error401)).rejects.toBeDefined();
     expect(unauthorizedCallback).toHaveBeenCalled();
+  });
+
+  describe("WatchlistApi Endpoints", () => {
+    test("getWatchlist calls GET /api/v1/watchlist", async () => {
+      const getSpy = jest.spyOn(apiClient, "get").mockResolvedValue({
+        data: { success: true, data: { items: [], count: 0 } },
+      });
+
+      const res = await WatchlistApi.getWatchlist();
+      expect(getSpy).toHaveBeenCalledWith("/api/v1/watchlist");
+      expect(res.data?.count).toBe(0);
+    });
+
+    test("addItem calls POST /api/v1/watchlist/items with payload", async () => {
+      const postSpy = jest.spyOn(apiClient, "post").mockResolvedValue({
+        data: {
+          success: true,
+          data: {
+            item: {
+              id: "w-1",
+              instrumentId: "664000000000000000000010",
+              symbol: "RELIANCE",
+            },
+          },
+        },
+      });
+
+      await WatchlistApi.addItem("664000000000000000000010");
+      expect(postSpy).toHaveBeenCalledWith("/api/v1/watchlist/items", {
+        instrumentId: "664000000000000000000010",
+      });
+    });
+
+    test("removeItem calls DELETE /api/v1/watchlist/items/:instrumentId", async () => {
+      const deleteSpy = jest.spyOn(apiClient, "delete").mockResolvedValue({
+        data: {
+          success: true,
+          data: { success: true, removedInstrumentId: "664000000000000000000010" },
+        },
+      });
+
+      await WatchlistApi.removeItem("664000000000000000000010");
+      expect(deleteSpy).toHaveBeenCalledWith(
+        "/api/v1/watchlist/items/664000000000000000000010"
+      );
+    });
+
+    test("reorder calls PATCH /api/v1/watchlist/reorder with payload", async () => {
+      const patchSpy = jest.spyOn(apiClient, "patch").mockResolvedValue({
+        data: {
+          success: true,
+          data: { items: [], count: 0 },
+        },
+      });
+
+      const ids = [
+        "664000000000000000000010",
+        "664000000000000000000011",
+      ];
+      await WatchlistApi.reorder(ids);
+      expect(patchSpy).toHaveBeenCalledWith("/api/v1/watchlist/reorder", {
+        instrumentIds: ids,
+      });
+    });
+  });
+
+  describe("InstrumentsApi Search Endpoints", () => {
+    test("search calls GET /api/v1/instruments with params and signal", async () => {
+      const controller = new AbortController();
+      const getSpy = jest.spyOn(apiClient, "get").mockResolvedValue({
+        data: {
+          success: true,
+          data: { items: [], pagination: { page: 1, limit: 10, total: 0, totalPages: 1 } },
+        },
+      });
+
+      await InstrumentsApi.search(
+        { search: "reliance", isTradable: true, page: 1, limit: 10 },
+        { signal: controller.signal }
+      );
+
+      expect(getSpy).toHaveBeenCalledWith("/api/v1/instruments", {
+        params: { search: "reliance", isTradable: true, page: 1, limit: 10 },
+        signal: controller.signal,
+      });
+    });
   });
 });
