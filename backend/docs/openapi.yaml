@@ -483,6 +483,222 @@ paths:
           $ref: '#/components/responses/NotFoundError'
 
   # ==========================================
+  # SYNTHETIC MARKET INDICES & HISTORICAL CANDLES
+  # ==========================================
+  /api/v1/market/indices:
+    get:
+      summary: List synthetic market indices
+      description: Retrieves all synthetic benchmark market indices (NIFTY50, SENSEX) with fixed-point values and change metrics.
+      tags:
+        - Market Data
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: List of synthetic market indices
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/MarketIndex'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /api/v1/market/indices/{symbol}:
+    get:
+      summary: Get synthetic market index details and constituents
+      description: Retrieves a single synthetic market index (NIFTY50 or SENSEX) with its full equal-weighted constituent breakdown.
+      tags:
+        - Market Data
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [NIFTY50, SENSEX]
+      responses:
+        '200':
+          description: Synthetic market index details
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      index:
+                        $ref: '#/components/schemas/MarketIndex'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/market/indices/{symbol}/candles:
+    get:
+      summary: Get historical OHLC candles for a synthetic market index
+      description: >-
+        Retrieves chronological OHLC candles in fixed-point index units (100 units = 1.00 index point)
+        across 1m, 5m, 15m, 1h, or 1d intervals. All stored timestamps are UTC: 1d candles use
+        Asia/Kolkata calendar-day boundaries (00:00 IST to 24:00 IST = 18:30Z previous day to 18:30Z),
+        1h candles align to 09:15 IST session open (03:45Z; final partial session slot 15:15-15:30 IST = 09:45Z-10:00Z),
+        and date-only YYYY-MM-DD from/to parameters are interpreted on the Asia/Kolkata calendar.
+      tags:
+        - Market Data
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: symbol
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [NIFTY50, SENSEX]
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 15m, 1h, 1d]
+            default: 1d
+        - name: from
+          in: query
+          description: ISO-8601 date (YYYY-MM-DD in Asia/Kolkata) or date-time boundary (inclusive start).
+          schema:
+            type: string
+        - name: to
+          in: query
+          description: ISO-8601 date (YYYY-MM-DD in Asia/Kolkata) or date-time boundary (inclusive end).
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Chronological index OHLC candles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      index:
+                        $ref: '#/components/schemas/MarketIndex'
+                      interval:
+                        type: string
+                        enum: [1m, 5m, 15m, 1h, 1d]
+                      candles:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/MarketIndexCandle'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /api/v1/market/instruments/{instrumentId}/candles:
+    get:
+      summary: Get historical OHLC candles for a tradable equity instrument
+      description: >-
+        Retrieves chronological OHLC candles in integer paise (₹1.00 = 100 paise)
+        across 1m, 5m, 15m, 1h, or 1d intervals. All stored timestamps are UTC: 1d candles use
+        Asia/Kolkata calendar-day boundaries (00:00 IST to 24:00 IST = 18:30Z previous day to 18:30Z),
+        1h candles align to 09:15 IST session open (03:45Z; final partial session slot 15:15-15:30 IST = 09:45Z-10:00Z),
+        and date-only YYYY-MM-DD from/to parameters are interpreted on the Asia/Kolkata calendar.
+      tags:
+        - Market Data
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: instrumentId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-fA-F]{24}$'
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [1m, 5m, 15m, 1h, 1d]
+            default: 1d
+        - name: from
+          in: query
+          description: ISO-8601 date (YYYY-MM-DD in Asia/Kolkata) or date-time boundary (inclusive start).
+          schema:
+            type: string
+        - name: to
+          in: query
+          description: ISO-8601 date (YYYY-MM-DD in Asia/Kolkata) or date-time boundary (inclusive end).
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 100
+      responses:
+        '200':
+          description: Chronological equity OHLC candles
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      instrument:
+                        $ref: '#/components/schemas/Instrument'
+                      interval:
+                        type: string
+                        enum: [1m, 5m, 15m, 1h, 1d]
+                      candles:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/MarketCandle'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  # ==========================================
   # WATCHLIST
   # ==========================================
   /api/v1/watchlist:
@@ -1524,6 +1740,147 @@ components:
         totalPages:
           type: integer
           example: 3
+
+    MarketIndexConstituent:
+      type: object
+      properties:
+        instrumentId:
+          type: string
+          example: "65e5b3f23a1c2d0012345679"
+        symbol:
+          type: string
+          example: "RELIANCE"
+        exchange:
+          type: string
+          enum: [NSE, BSE]
+          example: "NSE"
+        weightBps:
+          type: integer
+          example: 200
+        basePricePaise:
+          type: integer
+          example: 251800
+
+    MarketIndex:
+      type: object
+      properties:
+        _id:
+          type: string
+          example: "673800000000000000000050"
+        symbol:
+          type: string
+          enum: [NIFTY50, SENSEX]
+          example: "NIFTY50"
+        name:
+          type: string
+          example: "NIFTY 50 (Simulated)"
+        description:
+          type: string
+          example: "Synthetic equal-weighted benchmark index derived from all 50 NIVORA NSE practice equities."
+        currentValue:
+          type: integer
+          description: "Fixed-point hundredths of an index point (100 units = 1.00 index point)"
+          example: 2418550
+        baseValue:
+          type: integer
+          example: 2400000
+        previousCloseValue:
+          type: integer
+          example: 2400000
+        changeValue:
+          type: integer
+          example: 18550
+        changeBps:
+          type: integer
+          example: 77
+        constituentCount:
+          type: integer
+          example: 50
+        constituents:
+          type: array
+          items:
+            $ref: '#/components/schemas/MarketIndexConstituent'
+        methodology:
+          type: string
+          enum: [EQUAL_WEIGHTED_CONSTITUENT_BASKET]
+          example: "EQUAL_WEIGHTED_CONSTITUENT_BASKET"
+        source:
+          type: string
+          enum: [SIMULATED]
+          example: "SIMULATED"
+        valueUpdatedAt:
+          type: string
+          format: date-time
+
+    MarketCandle:
+      type: object
+      properties:
+        instrumentId:
+          type: string
+          example: "65e5b3f23a1c2d0012345679"
+        interval:
+          type: string
+          enum: [1m, 5m, 15m, 1h, 1d]
+          example: "1d"
+        openTime:
+          type: string
+          format: date-time
+          description: "UTC bucket open time (for 1d: 00:00 IST in UTC, i.e., 18:30Z prior UTC day; for 1h: :45 UTC anchored to 09:15 IST)"
+        closeTime:
+          type: string
+          format: date-time
+          description: "UTC bucket close time (for 1d: 24:00 IST in UTC; for final session 1h partial bar: 10:00Z = 15:30 IST)"
+        openPaise:
+          type: integer
+          example: 251800
+        highPaise:
+          type: integer
+          example: 255400
+        lowPaise:
+          type: integer
+          example: 250200
+        closePaise:
+          type: integer
+          example: 254000
+        source:
+          type: string
+          enum: [SIMULATED]
+          example: "SIMULATED"
+
+    MarketIndexCandle:
+      type: object
+      properties:
+        indexId:
+          type: string
+          example: "673800000000000000000050"
+        interval:
+          type: string
+          enum: [1m, 5m, 15m, 1h, 1d]
+          example: "1d"
+        openTime:
+          type: string
+          format: date-time
+          description: "UTC bucket open time (for 1d: 00:00 IST in UTC, i.e., 18:30Z prior UTC day; for 1h: :45 UTC anchored to 09:15 IST)"
+        closeTime:
+          type: string
+          format: date-time
+          description: "UTC bucket close time (for 1d: 24:00 IST in UTC; for final session 1h partial bar: 10:00Z = 15:30 IST)"
+        openValue:
+          type: integer
+          example: 2400000
+        highValue:
+          type: integer
+          example: 2425000
+        lowValue:
+          type: integer
+          example: 2392000
+        closeValue:
+          type: integer
+          example: 2418550
+        source:
+          type: string
+          enum: [SIMULATED]
+          example: "SIMULATED"
 
   responses:
     ErrorResponse:

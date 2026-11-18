@@ -124,6 +124,8 @@ export function validateRequest(schemas: RequestValidationSchemas): RequestHandl
             specificErrorCode = "INVALID_ORDER_ID";
           } else if (field.toLowerCase().includes("tradeid")) {
             specificErrorCode = "INVALID_TRADE_ID";
+          } else if (field.toLowerCase().includes("symbol")) {
+            specificErrorCode = "INVALID_INDEX_SYMBOL";
           }
         }
       } else {
@@ -145,6 +147,8 @@ export function validateRequest(schemas: RequestValidationSchemas): RequestHandl
             specificErrorCode = "INVALID_ACCOUNT_ID";
           } else if (field.toLowerCase().includes("instrumentid")) {
             specificErrorCode = "INVALID_INSTRUMENT_ID";
+          } else if (field.toLowerCase().includes("interval")) {
+            specificErrorCode = "INVALID_CANDLE_INTERVAL";
           }
         }
       } else {

@@ -1,5 +1,6 @@
 import { Types } from "mongoose";
 import { InstrumentExchange } from "../instruments/instrument.types";
+import { MarketIndexSymbol } from "../market-indices/market-index.types";
 
 /**
  * Shared market sentiment regimes that introduce a correlated directional component
@@ -112,6 +113,19 @@ export interface MarketSimulationTickComputation {
 }
 
 /**
+ * Computed synthetic market index transition during a simulation tick.
+ */
+export interface SimulatedMarketIndexUpdate {
+  readonly indexId: Types.ObjectId;
+  readonly symbol: MarketIndexSymbol;
+  readonly previousValue: number;
+  readonly nextValue: number;
+  readonly baseValue: number;
+  readonly previousCloseValue: number;
+  readonly valueUpdatedAt: Date;
+}
+
+/**
  * Result of executing and persisting a market tick via `MarketSimulationService`.
  */
 export interface MarketSimulationTickResult {
@@ -122,9 +136,11 @@ export interface MarketSimulationTickResult {
   readonly marketEffectBps: number;
   readonly timestamp: Date;
   readonly updatedCount: number;
+  readonly updatedIndexCount?: number;
   readonly skippedNonTradableCount: number;
   readonly durationMs: number;
   readonly updates: readonly SimulatedInstrumentQuoteUpdate[];
+  readonly indexUpdates?: readonly SimulatedMarketIndexUpdate[];
 }
 
 /**

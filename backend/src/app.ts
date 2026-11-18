@@ -15,6 +15,7 @@ import {
   logError,
 } from "./shared/security";
 import { centralErrorHandler } from "./shared/errors";
+import { DEV_HOPPSCOTCH_EXTENSION_ORIGIN } from "./config/env";
 
 export interface AppConfig {
   isProduction: boolean;
@@ -107,6 +108,12 @@ export function createApp(config: AppConfig): Express {
     })
   );
 
+  const effectiveAllowedOrigins = config.isProduction
+    ? config.allowedOrigins.filter(
+        (origin) => origin !== DEV_HOPPSCOTCH_EXTENSION_ORIGIN
+      )
+    : config.allowedOrigins;
+
   app.use(
     cors({
       origin: (origin, callback) => {
@@ -114,7 +121,7 @@ export function createApp(config: AppConfig): Express {
         if (!origin) {
           return callback(null, true);
         }
-        if (config.allowedOrigins.includes(origin)) {
+        if (effectiveAllowedOrigins.includes(origin)) {
           return callback(null, true);
         }
         return callback(new Error(`CORS blocked: Origin ${origin} not permitted`));
