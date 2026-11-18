@@ -1,46 +1,44 @@
 /**
  * NIVORA Trading Platform — TopBar Component
- * Displays NIVORA brand logo, persistent NIFTY 50 and SENSEX ticker indicators,
- * and the primary navigation menu with dev session controls.
+ * Displays NIVORA brand logo, persistent synthetic NIFTY 50 and SENSEX ticker indicators,
+ * and primary navigation menu with developer session controls.
  */
 
 import React from "react";
 import { Link } from "react-router-dom";
-import { TrendingUp, TrendingDown } from "@mui/icons-material";
+import { TrendingUp, TrendingDown, Remove } from "@mui/icons-material";
 import { useMarket } from "../context/MarketContext";
+import {
+  bpsToPercent,
+  formatIndexPoints,
+  indexChangeValueToPoints,
+  indexValueToPoints,
+} from "../api/types";
 import Menu from "./Menu";
 
 export const TopBar: React.FC = () => {
   const { indices, indicesLoading, selectInstrument, selectedInstrument } = useMarket();
 
-  const nifty = indices.find(
-    (idx) => idx.symbol === "NIFTY50" || idx.name.includes("NIFTY")
-  );
-  const sensex = indices.find(
-    (idx) => idx.symbol === "SENSEX" || idx.name.includes("SENSEX")
-  );
+  const nifty = indices.find((idx) => idx.symbol === "NIFTY50");
+  const sensex = indices.find((idx) => idx.symbol === "SENSEX");
 
   const handleSelectNifty = () => {
     selectInstrument({
       symbol: "NIFTY 50",
-      name: nifty?.name || "NIFTY 50 Index",
+      name: nifty?.name || "NIFTY 50 Synthetic Index",
       type: "index",
       exchange: "NSE",
-      lastPricePaise: nifty?.currentValuePaise,
-      changePoints: nifty?.changePoints,
-      changePercent: nifty?.changePercent,
+      indexSymbol: "NIFTY50",
     });
   };
 
   const handleSelectSensex = () => {
     selectInstrument({
       symbol: "SENSEX",
-      name: sensex?.name || "BSE SENSEX Index",
+      name: sensex?.name || "BSE SENSEX Synthetic Index",
       type: "index",
       exchange: "BSE",
-      lastPricePaise: sensex?.currentValuePaise,
-      changePoints: sensex?.changePoints,
-      changePercent: sensex?.changePercent,
+      indexSymbol: "SENSEX",
     });
   };
 
@@ -73,28 +71,33 @@ export const TopBar: React.FC = () => {
             title="Click to view NIFTY 50 in workspace"
           >
             <span className="index-name">NIFTY 50</span>
-            {indicesLoading ? (
+            {indicesLoading && !nifty ? (
               <span className="index-loading">...</span>
             ) : nifty ? (
               <span className="index-values">
                 <span className="index-points">
-                  {(nifty.currentValue || nifty.currentValuePaise / 100).toLocaleString(
-                    "en-IN",
-                    { minimumFractionDigits: 2, maximumFractionDigits: 2 }
-                  )}
+                  {formatIndexPoints(indexValueToPoints(nifty.currentValue))}
                 </span>
                 <span
                   className={`index-chg ${
-                    nifty.changePoints >= 0 ? "positive" : "negative"
+                    nifty.changeBps > 0
+                      ? "positive"
+                      : nifty.changeBps < 0
+                      ? "negative"
+                      : "neutral"
                   }`}
                 >
-                  {nifty.changePoints >= 0 ? (
+                  {nifty.changeBps > 0 ? (
                     <TrendingUp className="chg-icon" />
-                  ) : (
+                  ) : nifty.changeBps < 0 ? (
                     <TrendingDown className="chg-icon" />
+                  ) : (
+                    <Remove className="chg-icon" />
                   )}
-                  {nifty.changePoints >= 0 ? "+" : ""}
-                  {nifty.changePercent.toFixed(2)}%
+                  {nifty.changeBps > 0 ? "+" : ""}
+                  {indexChangeValueToPoints(nifty.changeValue).toFixed(2)} (
+                  {nifty.changeBps > 0 ? "+" : ""}
+                  {bpsToPercent(nifty.changeBps).toFixed(2)}%)
                 </span>
               </span>
             ) : (
@@ -113,30 +116,33 @@ export const TopBar: React.FC = () => {
             title="Click to view SENSEX in workspace"
           >
             <span className="index-name">SENSEX</span>
-            {indicesLoading ? (
+            {indicesLoading && !sensex ? (
               <span className="index-loading">...</span>
             ) : sensex ? (
               <span className="index-values">
                 <span className="index-points">
-                  {(
-                    sensex.currentValue || sensex.currentValuePaise / 100
-                  ).toLocaleString("en-IN", {
-                    minimumFractionDigits: 2,
-                    maximumFractionDigits: 2,
-                  })}
+                  {formatIndexPoints(indexValueToPoints(sensex.currentValue))}
                 </span>
                 <span
                   className={`index-chg ${
-                    sensex.changePoints >= 0 ? "positive" : "negative"
+                    sensex.changeBps > 0
+                      ? "positive"
+                      : sensex.changeBps < 0
+                      ? "negative"
+                      : "neutral"
                   }`}
                 >
-                  {sensex.changePoints >= 0 ? (
+                  {sensex.changeBps > 0 ? (
                     <TrendingUp className="chg-icon" />
-                  ) : (
+                  ) : sensex.changeBps < 0 ? (
                     <TrendingDown className="chg-icon" />
+                  ) : (
+                    <Remove className="chg-icon" />
                   )}
-                  {sensex.changePoints >= 0 ? "+" : ""}
-                  {sensex.changePercent.toFixed(2)}%
+                  {sensex.changeBps > 0 ? "+" : ""}
+                  {indexChangeValueToPoints(sensex.changeValue).toFixed(2)} (
+                  {sensex.changeBps > 0 ? "+" : ""}
+                  {bpsToPercent(sensex.changeBps).toFixed(2)}%)
                 </span>
               </span>
             ) : (

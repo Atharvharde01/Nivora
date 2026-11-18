@@ -10,7 +10,7 @@ import {
   MarketCandlesQuery,
   MarketCandlesResult,
   MarketIndicesListResult,
-  MarketIndexSummary,
+  MarketIndexDetail,
   InstrumentQuote,
   InstrumentSummary,
   OrdersListResult,
@@ -98,9 +98,9 @@ export const MarketApi = {
     return res.data;
   },
 
-  /** Fetch a single market index by symbol */
-  async getIndex(symbol: string): Promise<ApiResponse<{ index: MarketIndexSummary }>> {
-    const res = await apiClient.get<ApiResponse<{ index: MarketIndexSummary }>>(
+  /** Fetch a single market index by symbol with full constituent breakdown */
+  async getIndex(symbol: string): Promise<ApiResponse<{ index: MarketIndexDetail }>> {
+    const res = await apiClient.get<ApiResponse<{ index: MarketIndexDetail }>>(
       `/api/v1/market/indices/${encodeURIComponent(symbol)}`
     );
     return res.data;

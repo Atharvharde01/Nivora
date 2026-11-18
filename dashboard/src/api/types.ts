@@ -5,6 +5,7 @@
 
 export type InstrumentExchange = "NSE" | "BSE";
 export type InstrumentType = "equity" | "index";
+export type MarketIndexSymbol = "NIFTY50" | "SENSEX";
 
 export interface ApiResponse<T> {
   success: boolean;
@@ -26,15 +27,13 @@ export interface InstrumentSummary {
   symbol: string;
   name: string;
   exchange: InstrumentExchange;
-  lotSize: number;
-  tickSize: number;
   isTradable: boolean;
-  currentPricePaise?: number;
-  closePricePaise?: number;
-  openPricePaise?: number;
-  highPricePaise?: number;
-  lowPricePaise?: number;
-  lastTradedAt?: string;
+  lastPricePaise: number;
+  bidPricePaise: number;
+  askPricePaise: number;
+  previousClosePaise: number;
+  isStarterWatchlist?: boolean;
+  priceUpdatedAt: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -62,40 +61,104 @@ export interface InstrumentQuote {
   instrumentId: string;
   symbol: string;
   exchange: InstrumentExchange;
+  isTradable: boolean;
   lastPricePaise: number;
   bidPricePaise: number;
   askPricePaise: number;
   previousClosePaise: number;
   priceUpdatedAt: string;
+  quoteSource: string;
+  quoteAgeMs: number;
   isStale: boolean;
-  quoteSource?: string;
 }
 
-// ==================== MARKET INDICES & CANDLES ====================
+// ==================== MARKET INDICES & CONSTITUENTS ====================
 
+/**
+ * Constituent equity inside a synthetic market index.
+ * Matches backend `IMarketIndexConstituent`.
+ */
 export interface MarketIndexConstituent {
   instrumentId: string;
   symbol: string;
-  weight: number;
-  lastPricePaise?: number;
+  exchange: InstrumentExchange;
+  weightBps: number; // 100 bps = 1.00%
+  basePricePaise: number; // In paise
 }
 
+/**
+ * Synthetic market index summary returned by `GET /api/v1/market/indices`.
+ * Values are stored as fixed-point integers (100 units = 1.00 index point).
+ */
 export interface MarketIndexSummary {
-  symbol: string; // e.g. "NIFTY50", "SENSEX"
-  name: string; // e.g. "NIFTY 50", "BSE SENSEX"
-  exchange: InstrumentExchange;
-  currentValuePaise: number;
-  currentValue: number;
-  previousClosePaise?: number;
-  changePoints: number;
-  changePercent: number;
-  constituents?: MarketIndexConstituent[];
-  updatedAt: string;
+  _id: string;
+  symbol: MarketIndexSymbol;
+  name: string;
+  description: string;
+  currentValue: number; // Fixed-point: divide by 100 for display
+  baseValue: number;
+  previousCloseValue: number;
+  changeValue: number; // Fixed-point: divide by 100 for display
+  changeBps: number; // Basis points: divide by 100 for percentage
+  constituentCount: number;
+  methodology: string;
+  source: string;
+  valueUpdatedAt: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+/**
+ * Detailed synthetic market index returned by `GET /api/v1/market/indices/:symbol`.
+ * Includes complete constituent equity breakdown.
+ */
+export interface MarketIndexDetail extends MarketIndexSummary {
+  constituents: MarketIndexConstituent[];
 }
 
 export interface MarketIndicesListResult {
   items: MarketIndexSummary[];
 }
+
+// ==================== CONVERSION & FORMATTING HELPERS ====================
+
+/** Converts backend fixed-point index integer (100 units = 1 pt) to index points */
+export function indexValueToPoints(fixedPointValue: number): number {
+  return fixedPointValue / 100;
+}
+
+/** Converts backend fixed-point change integer to index change points */
+export function indexChangeValueToPoints(changeValue: number): number {
+  return changeValue / 100;
+}
+
+/** Converts basis points (100 bps = 1.00%) to percentage number */
+export function bpsToPercent(bps: number): number {
+  return bps / 100;
+}
+
+/** Converts paise to rupees */
+export function paiseToRupees(paise: number): number {
+  return paise / 100;
+}
+
+/** Formats a numerical rupee value with Indian comma separation */
+export function formatRupees(rupees: number, decimals: number = 2): string {
+  return rupees.toLocaleString("en-IN", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+/** Formats index points with Indian comma separation */
+export function formatIndexPoints(points: number, decimals: number = 2): string {
+  return points.toLocaleString("en-IN", {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  });
+}
+
+// ==================== MARKET CANDLES ====================
 
 export type CandleInterval = "1m" | "5m" | "15m" | "1h" | "1d";
 
