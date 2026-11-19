@@ -50,6 +50,14 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
     });
   });
 
+  const DEFAULT_SIGNUP_CONSENTS = {
+    acceptTerms: true,
+    acceptPrivacy: true,
+    acceptSimulationDisclosure: true,
+    termsVersion: "1.0",
+    privacyVersion: "1.0",
+  };
+
   describe("1. Refresh Token Rotation & Multi-Step Succession", () => {
     it("rotates refresh token sequentially across multiple generations", async () => {
       const email = "rotate.trader@nivora.test";
@@ -60,6 +68,8 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
       const login = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Rotate Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "Browser/1.0",
       });
@@ -133,6 +143,8 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
       const login = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Reuse Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "Browser/1.0",
       });
@@ -239,6 +251,8 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
       const login = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Safe Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "Browser/1.0",
       });
@@ -276,6 +290,8 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
       const login = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Concurrency Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "Browser/1.0",
       });
@@ -321,6 +337,8 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
       const login = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Logout Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "Browser/1.0",
       });
@@ -352,6 +370,8 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
       const login1 = await authService.verifyOtpAndLogin({
         email,
         otp: otp1,
+        displayName: "Logout All Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "10.0.0.1",
         userAgent: "Device1",
       });
@@ -390,6 +410,8 @@ describe("Task 24 — Refresh Token Rotation, Multi-Generation Reuse & Logout (R
       const login1 = await authService.verifyOtpAndLogin({
         email,
         otp: otp1,
+        displayName: "Devices Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "10.0.0.1",
         userAgent: "Device1",
       });

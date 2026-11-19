@@ -2,7 +2,7 @@
  * NIVORA Trading Platform — Portfolio & Account Context
  * Centralizes portfolio valuation, active positions, cash balance metrics,
  * and synchronized data refresh across Orders, Holdings, Positions, Funds, and Workspace.
- * Strictly isolated across authentication sessions with synchronous generation tracking.
+ * Uses request-generation and authentication session tracking to eliminate stale fetch races.
  */
 
 import React, {
@@ -80,18 +80,44 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({
   }
 
   const isMountedRef = useRef<boolean>(true);
-  const isFetchingPortfolioRef = useRef<boolean>(false);
-  const isFetchingAccountRef = useRef<boolean>(false);
 
-  // Portfolio State
-  const [portfolio, setPortfolio] = useState<PortfolioResponseData | null>(null);
-  const [portfolioLoading, setPortfolioLoading] = useState<boolean>(false);
-  const [portfolioError, setPortfolioError] = useState<string | null>(null);
+  // Monotonically increasing request IDs (replaces global boolean locks)
+  const portfolioRequestIdRef = useRef<number>(0);
+  const accountRequestIdRef = useRef<number>(0);
 
-  // Practice Account State
-  const [account, setAccount] = useState<PracticeAccountSummaryDto | null>(null);
-  const [accountLoading, setAccountLoading] = useState<boolean>(false);
-  const [accountError, setAccountError] = useState<string | null>(null);
+  // Session-scoped Portfolio State
+  const [portfolioState, setPortfolioState] = useState<{
+    data: PortfolioResponseData | null;
+    sessionGen: number;
+  }>({ data: null, sessionGen: 0 });
+
+  const [portfolioLoadingState, setPortfolioLoadingState] = useState<{
+    loading: boolean;
+    sessionGen: number;
+    requestId: number;
+  }>({ loading: false, sessionGen: 0, requestId: 0 });
+
+  const [portfolioErrorState, setPortfolioErrorState] = useState<{
+    error: string | null;
+    sessionGen: number;
+  }>({ error: null, sessionGen: 0 });
+
+  // Session-scoped Account State
+  const [accountState, setAccountState] = useState<{
+    data: PracticeAccountSummaryDto | null;
+    sessionGen: number;
+  }>({ data: null, sessionGen: 0 });
+
+  const [accountLoadingState, setAccountLoadingState] = useState<{
+    loading: boolean;
+    sessionGen: number;
+    requestId: number;
+  }>({ loading: false, sessionGen: 0, requestId: 0 });
+
+  const [accountErrorState, setAccountErrorState] = useState<{
+    error: string | null;
+    sessionGen: number;
+  }>({ error: null, sessionGen: 0 });
 
   // Orders Refresh Version Key
   const [ordersRefreshKey, setOrdersRefreshKey] = useState<number>(0);
@@ -108,34 +134,78 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({
     setOrdersRefreshKey((prev) => prev + 1);
   }, []);
 
-  // Fetch full portfolio with session-generation guard
+  // Synchronously derived states: immediately null when session does not match
+  const activeSessionGen = authSessionGenRef.current;
+  const isCurrentSessionActive = isAuthenticated && Boolean(token);
+
+  const portfolio =
+    isCurrentSessionActive && portfolioState.sessionGen === activeSessionGen
+      ? portfolioState.data
+      : null;
+
+  const portfolioLoading =
+    isCurrentSessionActive &&
+    portfolioLoadingState.sessionGen === activeSessionGen &&
+    portfolioLoadingState.requestId === portfolioRequestIdRef.current
+      ? portfolioLoadingState.loading
+      : false;
+
+  const portfolioError =
+    isCurrentSessionActive && portfolioErrorState.sessionGen === activeSessionGen
+      ? portfolioErrorState.error
+      : null;
+
+  const account =
+    isCurrentSessionActive && accountState.sessionGen === activeSessionGen
+      ? accountState.data
+      : null;
+
+  const accountLoading =
+    isCurrentSessionActive &&
+    accountLoadingState.sessionGen === activeSessionGen &&
+    accountLoadingState.requestId === accountRequestIdRef.current
+      ? accountLoadingState.loading
+      : false;
+
+  const accountError =
+    isCurrentSessionActive && accountErrorState.sessionGen === activeSessionGen
+      ? accountErrorState.error
+      : null;
+
+  // Fetch full portfolio with request-generation and session-generation tracking
   const refreshPortfolio = useCallback(async () => {
     const sessionGen = authSessionGenRef.current;
 
     if (!isAuthenticated || !token) {
-      setPortfolio(null);
-      setPortfolioError(null);
-      setPortfolioLoading(false);
+      setPortfolioState({ data: null, sessionGen });
+      setPortfolioErrorState({ error: null, sessionGen });
+      setPortfolioLoadingState({ loading: false, sessionGen, requestId: 0 });
       return;
     }
 
-    if (isFetchingPortfolioRef.current) return;
-    isFetchingPortfolioRef.current = true;
+    const requestId = ++portfolioRequestIdRef.current;
 
     if (isMountedRef.current) {
-      setPortfolioLoading(true);
-      setPortfolioError(null);
+      setPortfolioLoadingState({ loading: true, sessionGen, requestId });
+      setPortfolioErrorState({ error: null, sessionGen });
     }
 
     try {
       const res = await PortfolioApi.getPortfolio();
-      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+
+      // Guard: Discard responses whose session generation is no longer active,
+      // or if superseded by a newer request in the same session
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        portfolioRequestIdRef.current !== requestId
+      ) {
         return;
       }
 
       if (res.success && res.data) {
-        setPortfolio(res.data);
-        setPortfolioError(null);
+        setPortfolioState({ data: res.data, sessionGen });
+        setPortfolioErrorState({ error: null, sessionGen });
       } else {
         const errorMsg =
           typeof res.error === "object" && res.error !== null && "message" in res.error
@@ -143,51 +213,65 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({
             : typeof res.error === "string"
             ? res.error
             : "Failed to load portfolio.";
-        setPortfolioError(errorMsg);
+        setPortfolioErrorState({ error: errorMsg, sessionGen });
       }
     } catch (err: unknown) {
-      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        portfolioRequestIdRef.current !== requestId
+      ) {
         return;
       }
-      setPortfolioError(
-        err instanceof Error ? err.message : "Failed to load portfolio."
-      );
+      setPortfolioErrorState({
+        error: err instanceof Error ? err.message : "Failed to load portfolio.",
+        sessionGen,
+      });
     } finally {
-      isFetchingPortfolioRef.current = false;
-      if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
-        setPortfolioLoading(false);
+      if (
+        isMountedRef.current &&
+        authSessionGenRef.current === sessionGen &&
+        portfolioRequestIdRef.current === requestId
+      ) {
+        setPortfolioLoadingState({ loading: false, sessionGen, requestId });
       }
     }
   }, [isAuthenticated, token]);
 
-  // Fetch active practice account with session-generation guard
+  // Fetch active practice account with request-generation and session-generation tracking
   const refreshAccount = useCallback(async () => {
     const sessionGen = authSessionGenRef.current;
 
     if (!isAuthenticated || !token) {
-      setAccount(null);
-      setAccountError(null);
-      setAccountLoading(false);
+      setAccountState({ data: null, sessionGen });
+      setAccountErrorState({ error: null, sessionGen });
+      setAccountLoadingState({ loading: false, sessionGen, requestId: 0 });
       return;
     }
 
-    if (isFetchingAccountRef.current) return;
-    isFetchingAccountRef.current = true;
+    const requestId = ++accountRequestIdRef.current;
 
     if (isMountedRef.current) {
-      setAccountLoading(true);
-      setAccountError(null);
+      setAccountLoadingState({ loading: true, sessionGen, requestId });
+      setAccountErrorState({ error: null, sessionGen });
     }
 
     try {
       const res = await AccountsApi.getActiveAccount();
-      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+
+      // Guard: Discard responses whose session generation is no longer active,
+      // or if superseded by a newer request in the same session
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        accountRequestIdRef.current !== requestId
+      ) {
         return;
       }
 
       if (res.success && res.data?.account) {
-        setAccount(res.data.account);
-        setAccountError(null);
+        setAccountState({ data: res.data.account, sessionGen });
+        setAccountErrorState({ error: null, sessionGen });
       } else {
         const errorMsg =
           typeof res.error === "object" && res.error !== null && "message" in res.error
@@ -195,19 +279,27 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({
             : typeof res.error === "string"
             ? res.error
             : "Failed to load practice account.";
-        setAccountError(errorMsg);
+        setAccountErrorState({ error: errorMsg, sessionGen });
       }
     } catch (err: unknown) {
-      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        accountRequestIdRef.current !== requestId
+      ) {
         return;
       }
-      setAccountError(
-        err instanceof Error ? err.message : "Failed to load practice account."
-      );
+      setAccountErrorState({
+        error: err instanceof Error ? err.message : "Failed to load practice account.",
+        sessionGen,
+      });
     } finally {
-      isFetchingAccountRef.current = false;
-      if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
-        setAccountLoading(false);
+      if (
+        isMountedRef.current &&
+        authSessionGenRef.current === sessionGen &&
+        accountRequestIdRef.current === requestId
+      ) {
+        setAccountLoadingState({ loading: false, sessionGen, requestId });
       }
     }
   }, [isAuthenticated, token]);
@@ -218,15 +310,15 @@ export const PortfolioProvider: React.FC<{ children: React.ReactNode }> = ({
     await Promise.all([refreshPortfolio(), refreshAccount()]);
   }, [triggerOrdersRefresh, refreshPortfolio, refreshAccount]);
 
-  // On authentication change or mount, reset or fetch fresh data
+  // On authentication change or mount, reset and fetch fresh data
   useEffect(() => {
     if (!isAuthenticated || !token) {
-      setPortfolio(null);
-      setAccount(null);
-      setPortfolioError(null);
-      setAccountError(null);
-      setPortfolioLoading(false);
-      setAccountLoading(false);
+      setPortfolioState({ data: null, sessionGen: authSessionGenRef.current });
+      setAccountState({ data: null, sessionGen: authSessionGenRef.current });
+      setPortfolioErrorState({ error: null, sessionGen: authSessionGenRef.current });
+      setAccountErrorState({ error: null, sessionGen: authSessionGenRef.current });
+      setPortfolioLoadingState({ loading: false, sessionGen: authSessionGenRef.current, requestId: 0 });
+      setAccountLoadingState({ loading: false, sessionGen: authSessionGenRef.current, requestId: 0 });
       return;
     }
 

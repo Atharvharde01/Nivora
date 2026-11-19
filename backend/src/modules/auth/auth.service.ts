@@ -1,6 +1,10 @@
 import crypto from "node:crypto";
 import { Types } from "mongoose";
 import { UserModel } from "../users/user.model";
+import {
+  isValidDisplayName,
+  sanitizeDisplayName,
+} from "../users/user.schema";
 import { PracticeAccountModel } from "../practice-accounts/account.model";
 import { LedgerEntryModel } from "../ledger/ledger.model";
 import { SessionModel } from "./session.model";
@@ -15,14 +19,32 @@ import { ISession } from "./auth.types";
 export const SESSION_IDLE_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export const SESSION_ABSOLUTE_TIMEOUT_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 export const INITIAL_ACCOUNT_BALANCE_PAISE = 100_000_000; // ₹10,00,000 in integer paise
+export const DEFAULT_TERMS_VERSION = "1.0";
+export const DEFAULT_PRIVACY_VERSION = "1.0";
+
+export interface SignupConsentInput {
+  acceptTerms: boolean;
+  acceptPrivacy: boolean;
+  acceptSimulationDisclosure: boolean;
+  termsVersion?: string;
+  privacyVersion?: string;
+}
 
 export interface LoginResult {
+  isNewUser: boolean;
   user: {
     id: string;
+    userId: string;
     email: string;
+    emailVerifiedAt?: Date;
     displayName?: string;
     status: string;
     onboardingCompleted: boolean;
+    termsAcceptedAt?: Date;
+    termsVersion?: string;
+    privacyAcceptedAt?: Date;
+    privacyVersion?: string;
+    simulationDisclosureAcceptedAt?: Date;
   };
   session: {
     id: string;
@@ -45,8 +67,12 @@ export interface RefreshResult {
   };
   user: {
     id: string;
+    userId: string;
     email: string;
+    emailVerifiedAt?: Date;
+    displayName?: string;
     status: string;
+    onboardingCompleted: boolean;
   };
 }
 
@@ -80,9 +106,13 @@ export class AuthService {
   }
 
   /**
-   * Verifies email OTP and logs in the user:
-   * - Validates & consumes OTP challenge.
-   * - Provisions user, active practice account, initial funding ledger, and session atomically if new.
+   * Verifies email OTP and authenticates or registers the user automatically:
+   * - Validates OTP cryptographically first (preventing email enumeration on invalid OTP).
+   * - Before consuming the OTP, determines whether the email belongs to an existing or new user:
+   *   - New user: requires valid displayName and all applicable consents (without burning OTP on failure).
+   *   - Existing user: ignores any submitted displayName and preserves stored profile data.
+   * - Atomically consumes OTP challenge exactly once.
+   * - Provisions user, displayName, consents, one default PracticeAccount, initial funding ledger, and session if new.
    * - Resolves existing user and appends new session if returning.
    * - Persists durable RefreshToken record (generation 1).
    * - Issues 15-minute access JWT and returns opaque refresh token.
@@ -92,13 +122,62 @@ export class AuthService {
     otp: string;
     ipAddress: string;
     userAgent: string;
+    displayName?: string;
+    consents?: SignupConsentInput;
     now?: Date;
   }): Promise<LoginResult> {
-    const { email, otp, ipAddress, userAgent } = params;
+    const { email, otp, ipAddress, userAgent, displayName, consents } = params;
     const now = params.now ?? new Date();
 
-    // 1. Verify and consume OTP challenge
-    const otpResult = await this.otpService.verifyOtp(email, otp, now);
+    const allConsentsAccepted = Boolean(
+      consents &&
+        consents.acceptTerms === true &&
+        consents.acceptPrivacy === true &&
+        consents.acceptSimulationDisclosure === true
+    );
+
+    let sanitizedNewDisplayName: string | undefined;
+
+    // 1. Validate OTP cryptographically, enforce new-user requirements BEFORE consuming OTP,
+    //    then atomically consume OTP challenge (single-use guarantee under concurrency).
+    const otpResult = await this.otpService.verifyOtp(email, otp, now, {
+      beforeConsume: async (normalizedEmail: string) => {
+        const existingCheck = await UserModel.findOne({
+          email: normalizedEmail,
+        })
+          .select("_id status")
+          .lean();
+
+        if (!existingCheck) {
+          // CASE A: New user — require valid displayName and all required consents before burning OTP
+          const trimmedRaw =
+            typeof displayName === "string" ? displayName.trim() : "";
+          if (!trimmedRaw) {
+            throw new AuthError(
+              "DISPLAY_NAME_REQUIRED",
+              "Full name is required to create a new account.",
+              400
+            );
+          }
+          if (!isValidDisplayName(displayName)) {
+            throw new AuthError(
+              "INVALID_DISPLAY_NAME",
+              "Full name must be 2 to 50 characters, contain letters, and avoid special or control characters.",
+              400
+            );
+          }
+          if (!allConsentsAccepted) {
+            throw new AuthError(
+              "CONSENT_REQUIRED",
+              "Acceptance of Terms of Service, Privacy Policy, and Simulated Trading Disclosure is required to create an account.",
+              400
+            );
+          }
+          sanitizedNewDisplayName = sanitizeDisplayName(displayName as string);
+        }
+        // CASE B: Existing user — ignore any submitted displayName and allow authentication
+      },
+    });
     const normalizedEmail = otpResult.email;
 
     // 2. Generate opaque refresh token and its SHA-256 hash
@@ -115,8 +194,33 @@ export class AuthService {
 
     let userDoc: IUser & { _id: Types.ObjectId };
     let sessionDoc: ISession & { _id: Types.ObjectId };
+    let isNewUser = false;
+
+    const termsVersion = consents?.termsVersion?.trim() || DEFAULT_TERMS_VERSION;
+    const privacyVersion =
+      consents?.privacyVersion?.trim() || DEFAULT_PRIVACY_VERSION;
 
     if (!existingUser) {
+      // Defensive re-check in case an account was deleted concurrently between beforeConsume and tx
+      if (!sanitizedNewDisplayName) {
+        if (typeof displayName === "string" && isValidDisplayName(displayName)) {
+          sanitizedNewDisplayName = sanitizeDisplayName(displayName);
+        } else {
+          throw new AuthError(
+            "DISPLAY_NAME_REQUIRED",
+            "Full name is required to create a new account.",
+            400
+          );
+        }
+      }
+      if (!allConsentsAccepted) {
+        throw new AuthError(
+          "CONSENT_REQUIRED",
+          "Acceptance of Terms of Service, Privacy Policy, and Simulated Trading Disclosure is required to create an account.",
+          400
+        );
+      }
+
       // First-time signup: provision User + PracticeAccount + Initial Ledger + Session + Token atomically
       try {
         const provisioningResult = await executeMongoTransaction(
@@ -132,8 +236,15 @@ export class AuthService {
 
             const newUser = new UserModel({
               email: normalizedEmail,
+              emailVerifiedAt: now,
+              displayName: sanitizedNewDisplayName,
               status: "ACTIVE",
               onboardingCompleted: false,
+              termsAcceptedAt: now,
+              termsVersion,
+              privacyAcceptedAt: now,
+              privacyVersion,
+              simulationDisclosureAcceptedAt: now,
               lastLoginAt: now,
             });
             await newUser.save({ session });
@@ -194,6 +305,7 @@ export class AuthService {
         );
 
         if (!provisioningResult.isExisting) {
+          isNewUser = true;
           userDoc = provisioningResult.user as unknown as IUser & {
             _id: Types.ObjectId;
           };
@@ -204,6 +316,9 @@ export class AuthService {
           existingUser = provisioningResult.user;
         }
       } catch (err: unknown) {
+        if (err instanceof AuthError) {
+          throw err;
+        }
         // Handle race condition on duplicate email unique index gracefully
         existingUser = await UserModel.findOne({ email: normalizedEmail });
         if (!existingUser) {
@@ -228,8 +343,33 @@ export class AuthService {
         throw new AuthError("USER_NOT_FOUND", "Account not found.", 404);
       }
 
-      // Update last login
+      // Update last login, ensure emailVerifiedAt, backfill displayName ONLY for legacy users
+      // who genuinely have no stored displayName yet (NEVER overwrite an existing registered name),
+      // and persist consents if newly accepted.
       existingUser.lastLoginAt = now;
+      if (!existingUser.emailVerifiedAt) {
+        existingUser.emailVerifiedAt = now;
+      }
+      if (
+        (!existingUser.displayName || !existingUser.displayName.trim()) &&
+        typeof displayName === "string" &&
+        isValidDisplayName(displayName)
+      ) {
+        existingUser.displayName = sanitizeDisplayName(displayName);
+      }
+      if (allConsentsAccepted) {
+        if (!existingUser.termsAcceptedAt) {
+          existingUser.termsAcceptedAt = now;
+          existingUser.termsVersion = termsVersion;
+        }
+        if (!existingUser.privacyAcceptedAt) {
+          existingUser.privacyAcceptedAt = now;
+          existingUser.privacyVersion = privacyVersion;
+        }
+        if (!existingUser.simulationDisclosureAcceptedAt) {
+          existingUser.simulationDisclosureAcceptedAt = now;
+        }
+      }
       await existingUser.save();
 
       // Create new session document and refresh token record for this device
@@ -268,12 +408,20 @@ export class AuthService {
     });
 
     return {
+      isNewUser,
       user: {
         id: userDoc!._id.toString(),
+        userId: userDoc!._id.toString(),
         email: userDoc!.email,
+        emailVerifiedAt: userDoc!.emailVerifiedAt,
         displayName: userDoc!.displayName,
         status: userDoc!.status,
         onboardingCompleted: userDoc!.onboardingCompleted,
+        termsAcceptedAt: userDoc!.termsAcceptedAt,
+        termsVersion: userDoc!.termsVersion,
+        privacyAcceptedAt: userDoc!.privacyAcceptedAt,
+        privacyVersion: userDoc!.privacyVersion,
+        simulationDisclosureAcceptedAt: userDoc!.simulationDisclosureAcceptedAt,
       },
       session: {
         id: sessionDoc!._id.toString(),
@@ -490,8 +638,12 @@ export class AuthService {
       },
       user: {
         id: userDoc._id.toString(),
+        userId: userDoc._id.toString(),
         email: userDoc.email,
+        emailVerifiedAt: userDoc.emailVerifiedAt,
+        displayName: userDoc.displayName,
         status: userDoc.status,
+        onboardingCompleted: userDoc.onboardingCompleted,
       },
     };
   }

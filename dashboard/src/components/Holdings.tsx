@@ -83,7 +83,7 @@ export const Holdings: React.FC = () => {
           <p>
             {isAuthenticated
               ? "You do not have any open stock holdings in this practice account yet. Use the Marketwatch or Workspace to execute a BUY order."
-              : "Session token required to view portfolio holdings. Use Dev Token in the top menu to authenticate."}
+              : "Session token required to view portfolio holdings. Please sign in to continue."}
           </p>
         </div>
       ) : (

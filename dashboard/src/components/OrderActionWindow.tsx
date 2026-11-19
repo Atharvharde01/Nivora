@@ -4,9 +4,10 @@
  * Connects to backend POST /api/v1/orders with Idempotency-Key headers,
  * strict whole-integer share validation, non-tradable/index blocking,
  * server-authoritative quote execution, and automated portfolio synchronization.
+ * Hardened with request-generation and authentication session isolation.
  */
 
-import React, { useState, useEffect, useRef, useMemo } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   Dialog,
   DialogTitle,
@@ -16,32 +17,34 @@ import {
   TextField,
   Typography,
   Box,
+  IconButton,
   Chip,
   Alert,
-  CircularProgress,
-  IconButton,
 } from "@mui/material";
-import { Close, CheckCircleOutline, ErrorOutline } from "@mui/icons-material";
-import { useMarket } from "../context/MarketContext";
-import { useAuth } from "../context/AuthContext";
-import { usePortfolio } from "../context/PortfolioContext";
+import {
+  Close as CloseIcon,
+  CheckCircleOutline,
+  ErrorOutline,
+} from "@mui/icons-material";
 import { OrdersApi } from "../api/client";
 import {
+  formatRupees,
   OrderExecutionResult,
   OrderRejectionCode,
   OrderSide,
-  formatRupees,
   paiseToRupees,
 } from "../api/types";
+import { useAuth } from "../context/AuthContext";
+import { useMarket } from "../context/MarketContext";
+import { usePortfolio } from "../context/PortfolioContext";
 
 function generateIdempotencyKey(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-  return `ord-${Date.now()}-${Math.random().toString(36).substring(2, 12)}`;
+  const ts = Date.now().toString(36);
+  const randomPart = Math.random().toString(36).substring(2, 10);
+  return `ord_${ts}_${randomPart}`;
 }
 
-interface ExecutionFeedback {
+export interface ExecutionFeedback {
   type: "success" | "rejection" | "error";
   title: string;
   message: string;
@@ -60,35 +63,81 @@ export const OrderActionWindow: React.FC = () => {
     selectedQuote,
     refreshSelectedQuote,
   } = useMarket();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, token } = useAuth();
   const { positions, refreshAll } = usePortfolio();
 
   const isOpen = isBuyWindowOpen || isSellWindowOpen;
   const side: OrderSide = isBuyWindowOpen ? "BUY" : "SELL";
   const instrument = actionInstrument;
 
-  const [quantityStr, setQuantityStr] = useState<string>("1");
-  const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  // Synchronous auth-session generation tracking
+  const authSessionGenRef = useRef<number>(0);
+  const prevTokenRef = useRef<string | null>(token);
   const isSubmittingRef = useRef<boolean>(false);
 
-  const [feedback, setFeedback] = useState<ExecutionFeedback | null>(null);
+  if (prevTokenRef.current !== token) {
+    prevTokenRef.current = token;
+    authSessionGenRef.current += 1;
+    // An authentication change immediately voids any prior in-flight submission lock
+    isSubmittingRef.current = false;
+  }
+
+  const isMountedRef = useRef<boolean>(true);
+
+  // Monotonically increasing order submission ID
+  const orderSubmissionIdRef = useRef<number>(0);
+
+  const [quantityStr, setQuantityStr] = useState<string>("1");
+
+  // Session-scoped submission state
+  const [submissionState, setSubmissionState] = useState<{
+    submitting: boolean;
+    sessionGen: number;
+    submissionId: number;
+  }>({ submitting: false, sessionGen: 0, submissionId: 0 });
+
+  // Session-scoped execution feedback
+  const [feedbackState, setFeedbackState] = useState<{
+    feedback: ExecutionFeedback | null;
+    sessionGen: number;
+  }>({ feedback: null, sessionGen: 0 });
 
   // Idempotency Tracking: Preserve key when retrying identical payload; rotate on change
   const idempotencyKeyRef = useRef<string>(generateIdempotencyKey());
   const lastPayloadKeyRef = useRef<string>("");
 
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, []);
+
   // Reset form when modal opens or instrument changes
   useEffect(() => {
     if (isOpen) {
       setQuantityStr("1");
-      setFeedback(null);
-      setIsSubmitting(false);
+      setFeedbackState({ feedback: null, sessionGen: authSessionGenRef.current });
+      setSubmissionState({ submitting: false, sessionGen: authSessionGenRef.current, submissionId: 0 });
       isSubmittingRef.current = false;
       const initialKey = generateIdempotencyKey();
       idempotencyKeyRef.current = initialKey;
       lastPayloadKeyRef.current = "";
     }
   }, [isOpen, instrument?.symbol, side]);
+
+  // Synchronously derived states: immediately isolated across sessions
+  const activeSessionGen = authSessionGenRef.current;
+
+  const isSubmitting =
+    submissionState.submitting &&
+    submissionState.sessionGen === activeSessionGen &&
+    submissionState.submissionId === orderSubmissionIdRef.current;
+
+  const feedback =
+    feedbackState.sessionGen === activeSessionGen
+      ? feedbackState.feedback
+      : null;
 
   if (!isOpen || !instrument) {
     return null;
@@ -163,20 +212,26 @@ export const OrderActionWindow: React.FC = () => {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!isAuthenticated) {
-      setFeedback({
-        type: "error",
-        title: "Authentication Required",
-        message: "Please sign in to place orders.",
+    if (!isAuthenticated || !token) {
+      setFeedbackState({
+        feedback: {
+          type: "error",
+          title: "Authentication Required",
+          message: "Please sign in to place orders.",
+        },
+        sessionGen: authSessionGenRef.current,
       });
       return;
     }
 
     if (!isTradable || !instrument.instrumentId) {
-      setFeedback({
-        type: "error",
-        title: "Trading Disabled",
-        message: "Indices and non-tradable instruments cannot be ordered.",
+      setFeedbackState({
+        feedback: {
+          type: "error",
+          title: "Trading Disabled",
+          message: "Indices and non-tradable instruments cannot be ordered.",
+        },
+        sessionGen: authSessionGenRef.current,
       });
       return;
     }
@@ -189,9 +244,13 @@ export const OrderActionWindow: React.FC = () => {
     if (isSubmittingRef.current) {
       return;
     }
+
+    const sessionGen = authSessionGenRef.current;
+    const submissionId = ++orderSubmissionIdRef.current;
+
     isSubmittingRef.current = true;
-    setIsSubmitting(true);
-    setFeedback(null);
+    setSubmissionState({ submitting: true, sessionGen, submissionId });
+    setFeedbackState({ feedback: null, sessionGen });
 
     const idempotencyKey = idempotencyKeyRef.current;
 
@@ -205,6 +264,15 @@ export const OrderActionWindow: React.FC = () => {
         idempotencyKey
       );
 
+      // Guard: If session changed or submission was superseded, discard result completely
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        orderSubmissionIdRef.current !== submissionId
+      ) {
+        return;
+      }
+
       if (res.success && res.data) {
         const result: OrderExecutionResult = res.data;
 
@@ -216,35 +284,52 @@ export const OrderActionWindow: React.FC = () => {
             ? paiseToRupees(result.order.totalValuePaise)
             : 0;
 
-          setFeedback({
-            type: "success",
-            title: `Order Executed (${side})`,
-            message: `Successfully executed market order for ${parsedQuantity} shares of ${instrument.symbol}.`,
-            executionPriceRupees: execPrice,
-            totalValueRupees: totalVal,
-            wasIdempotentReplay: result.wasIdempotentReplay,
+          setFeedbackState({
+            feedback: {
+              type: "success",
+              title: `Order Executed (${side})`,
+              message: `Successfully executed market order for ${parsedQuantity} shares of ${instrument.symbol}.`,
+              executionPriceRupees: execPrice,
+              totalValueRupees: totalVal,
+              wasIdempotentReplay: result.wasIdempotentReplay,
+            },
+            sessionGen,
           });
 
           // Synchronize affected data across the entire application
-          await Promise.all([refreshAll(), refreshSelectedQuote()]);
+          try {
+            await Promise.all([refreshAll(), refreshSelectedQuote()]);
+          } catch (syncErr) {
+            console.warn("Post-order portfolio refresh warning:", syncErr);
+          }
         } else if (result.status === "REJECTED") {
-          setFeedback({
-            type: "rejection",
-            title: "Order Rejected",
-            message:
-              result.rejectionReason ||
-              "Your order was rejected by the server execution engine.",
-            rejectionCode: result.rejectionCode,
-            wasIdempotentReplay: result.wasIdempotentReplay,
+          setFeedbackState({
+            feedback: {
+              type: "rejection",
+              title: "Order Rejected",
+              message:
+                result.rejectionReason ||
+                "Your order was rejected by the server execution engine.",
+              rejectionCode: result.rejectionCode,
+              wasIdempotentReplay: result.wasIdempotentReplay,
+            },
+            sessionGen,
           });
 
           // Synchronize account/portfolio to reflect any rejection state
-          await refreshAll();
+          try {
+            await refreshAll();
+          } catch (syncErr) {
+            console.warn("Post-rejection portfolio refresh warning:", syncErr);
+          }
         } else {
-          setFeedback({
-            type: "error",
-            title: "Unexpected Status",
-            message: `Order status: ${result.status}`,
+          setFeedbackState({
+            feedback: {
+              type: "error",
+              title: "Unexpected Status",
+              message: `Order status: ${result.status}`,
+            },
+            sessionGen,
           });
         }
       } else {
@@ -255,26 +340,47 @@ export const OrderActionWindow: React.FC = () => {
             ? res.error
             : "Order submission failed.";
 
-        setFeedback({
-          type: "error",
-          title: "Submission Failed",
-          message: errorMsg,
+        setFeedbackState({
+          feedback: {
+            type: "error",
+            title: "Submission Failed",
+            message: errorMsg,
+          },
+          sessionGen,
         });
       }
     } catch (err: unknown) {
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        orderSubmissionIdRef.current !== submissionId
+      ) {
+        return;
+      }
+
       const errorMsg =
         err instanceof Error
           ? err.message
           : "Network error occurred while submitting order.";
 
-      setFeedback({
-        type: "error",
-        title: "Connection Error",
-        message: errorMsg,
+      setFeedbackState({
+        feedback: {
+          type: "error",
+          title: "Connection Error",
+          message: errorMsg,
+        },
+        sessionGen,
       });
     } finally {
-      isSubmittingRef.current = false;
-      setIsSubmitting(false);
+      if (
+        authSessionGenRef.current === sessionGen &&
+        orderSubmissionIdRef.current === submissionId
+      ) {
+        isSubmittingRef.current = false;
+        if (isMountedRef.current) {
+          setSubmissionState({ submitting: false, sessionGen, submissionId });
+        }
+      }
     }
   };
 
@@ -290,20 +396,21 @@ export const OrderActionWindow: React.FC = () => {
       fullWidth
       PaperProps={{
         sx: {
+          borderRadius: "8px",
+          overflow: "hidden",
           borderTop: `4px solid ${themeColor}`,
-          borderRadius: 2,
         },
       }}
     >
       <form onSubmit={handleSubmit} noValidate>
         {/* HEADER */}
-        <DialogTitle sx={{ pb: 1 }}>
+        <DialogTitle sx={{ p: 2, pb: 1 }}>
           <Box sx={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <Box>
-              <Typography variant="h6" component="div" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
+              <Typography variant="h6" component="div" sx={{ fontWeight: 700, fontSize: "1.1rem" }}>
                 {side} {instrument.symbol}
               </Typography>
-              <Typography variant="caption" sx={{ color: "text.secondary" }}>
+              <Typography variant="caption" color="text.secondary">
                 {instrument.exchange} • {instrument.name}
               </Typography>
             </Box>
@@ -312,30 +419,29 @@ export const OrderActionWindow: React.FC = () => {
                 label={side}
                 size="small"
                 sx={{
-                  bgcolor: lightBgColor,
-                  color: themeColor,
+                  bgcolor: themeColor,
+                  color: "#FFFFFF",
                   fontWeight: 700,
-                  border: `1px solid ${borderTone}`,
+                  fontSize: "0.72rem",
                 }}
               />
               <IconButton
-                aria-label="Close order window"
-                onClick={handleClose}
                 size="small"
+                onClick={handleClose}
                 disabled={isSubmitting}
+                aria-label="Close order window"
               >
-                <Close fontSize="small" />
+                <CloseIcon fontSize="small" />
               </IconButton>
             </Box>
           </Box>
         </DialogTitle>
 
-        {/* CONTENT */}
-        <DialogContent dividers sx={{ py: 2 }}>
-          {/* INDEX / NON-TRADABLE WARNING */}
+        <DialogContent dividers sx={{ p: 2.5 }}>
+          {/* INDEX / UNTRADABLE WARNINGS */}
           {isIndex && (
             <Alert severity="warning" sx={{ mb: 2, fontSize: "0.82rem" }}>
-              <strong>{instrument.symbol}</strong> is a market index benchmark and cannot be traded directly. Select an equity instrument from the Marketwatch to trade.
+              Indices cannot be traded directly. Select a constituent stock or equity from the Marketwatch to trade.
             </Alert>
           )}
 
@@ -348,7 +454,7 @@ export const OrderActionWindow: React.FC = () => {
           {/* UNAUTHENTICATED ALERT */}
           {!isAuthenticated && (
             <Alert severity="info" sx={{ mb: 2, fontSize: "0.82rem" }}>
-              Authentication required to submit orders. Use Dev Token in the top menu to sign in.
+              Authentication required to submit orders. Please sign in to continue.
             </Alert>
           )}
 
@@ -428,100 +534,88 @@ export const OrderActionWindow: React.FC = () => {
               value="MARKET"
               disabled
               fullWidth
+              helperText="Instant execution at LTP"
             />
           </Box>
 
-          {/* PORTFOLIO HOLDING INFO (FOR SELL ORDERS) */}
-          {side === "SELL" && isTradable && isAuthenticated && (
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "space-between",
-                px: 1.5,
-                py: 1,
-                mb: 1.5,
-                bgcolor: availableShares > 0 ? "#F0FDF4" : "#FEF2F2",
-                borderRadius: 1,
-                border: `1px solid ${availableShares > 0 ? "#BBF7D0" : "#FECACA"}`,
-              }}
-            >
-              <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                Available in Portfolio:
-              </Typography>
-              <Typography
-                variant="caption"
-                sx={{ fontWeight: 700, color: availableShares > 0 ? "#166534" : "#991B1B" }}
-              >
-                {availableShares} share{availableShares === 1 ? "" : "s"}
-              </Typography>
-            </Box>
-          )}
-
-          {/* INDICATIVE PRICING & CONSIDERATION ESTIMATE */}
+          {/* INDICATIVE PRICE & HOLDINGS CONTEXT */}
           <Box
             sx={{
-              display: "flex",
-              justifyContent: "space-between",
               p: 1.5,
-              bgcolor: "#F8FAFC",
-              borderRadius: 1,
-              border: "1px solid #E2E8F0",
-              mb: 1.5,
+              borderRadius: "4px",
+              bgcolor: lightBgColor,
+              border: `1px solid ${borderTone}`,
+              mb: 1,
             }}
           >
-            <div>
-              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                Indicative Quote:
+            <Box sx={{ display: "flex", justifyContent: "space-between", mb: 0.5 }}>
+              <Typography variant="caption" color="text.secondary">
+                Indicative Market Price:
               </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 600 }}>
-                {indicativeRupees > 0 ? `₹${formatRupees(indicativeRupees)}` : "Market Price"}
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>
+                {indicativeRupees > 0 ? `₹${formatRupees(indicativeRupees)}` : "—"}
               </Typography>
-            </div>
-            <div style={{ textAlign: "right" }}>
-              <Typography variant="caption" sx={{ color: "text.secondary", display: "block" }}>
-                Estimated Consideration:
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 700, color: themeColor }}>
-                {estimatedTotalRupees !== null
-                  ? `₹${formatRupees(estimatedTotalRupees)}`
-                  : "—"}
-              </Typography>
-            </div>
+            </Box>
+
+            {estimatedTotalRupees !== null && (
+              <Box sx={{ display: "flex", justifyContent: "space-between", mb: 0.5 }}>
+                <Typography variant="caption" color="text.secondary">
+                  Estimated Total:
+                </Typography>
+                <Typography variant="body2" sx={{ fontWeight: 700, color: themeColor }}>
+                  ₹{formatRupees(estimatedTotalRupees)}
+                </Typography>
+              </Box>
+            )}
+
+            {side === "SELL" && (
+              <Box sx={{ display: "flex", justifyContent: "space-between", mt: 0.5, pt: 0.5, borderTop: "1px dashed rgba(0,0,0,0.1)" }}>
+                <Typography variant="caption" color="text.secondary">
+                  Your Available Holding:
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    fontWeight: 700,
+                    color: availableShares > 0 ? "text.primary" : "#DC2626",
+                  }}
+                >
+                  {availableShares} share{availableShares === 1 ? "" : "s"}
+                </Typography>
+              </Box>
+            )}
           </Box>
 
-          <Typography variant="caption" sx={{ color: "text.secondary", display: "block", fontSize: "0.74rem" }}>
-            * Market orders execute strictly at the backend execution engine's authoritative quote.
+          <Typography variant="caption" color="text.secondary" display="block" sx={{ fontSize: "0.72rem" }}>
+            * Final execution price is determined by the server matching engine at order receipt.
           </Typography>
         </DialogContent>
 
-        {/* ACTIONS */}
-        <DialogActions sx={{ px: 3, py: 2, justifyContent: "space-between" }}>
-          <Button onClick={handleClose} color="inherit" size="small" disabled={isSubmitting}>
+        <DialogActions sx={{ p: 2, pt: 1, bgcolor: "#F8FAFC", justifyContent: "space-between" }}>
+          <Button
+            onClick={handleClose}
+            disabled={isSubmitting}
+            size="small"
+            sx={{ color: "#64748B", textTransform: "none" }}
+          >
             Cancel
           </Button>
+
           <Button
             type="submit"
             variant="contained"
-            disabled={
-              isSubmitting ||
-              !isAuthenticated ||
-              !isTradable ||
-              !isValidQuantity
-            }
+            disabled={!isValidQuantity || !isTradable || !isAuthenticated || isSubmitting}
             sx={{
               bgcolor: themeColor,
-              "&:hover": {
-                bgcolor: side === "BUY" ? "#1D4ED8" : "#C2410C",
-              },
+              "&:hover": { bgcolor: themeColor, opacity: 0.9 },
+              px: 3,
               fontWeight: 700,
-              minWidth: 100,
+              textTransform: "none",
             }}
           >
-            {isSubmitting ? (
-              <CircularProgress size={20} color="inherit" />
-            ) : (
-              `${side} ${isValidQuantity && parsedQuantity > 0 ? `(${parsedQuantity})` : ""}`
-            )}
+            {isSubmitting
+              ? "Submitting..."
+              : `${side} ${isValidQuantity ? `(${parsedQuantity})` : ""}`}
           </Button>
         </DialogActions>
       </form>

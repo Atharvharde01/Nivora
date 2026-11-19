@@ -34,7 +34,7 @@ export const MarketsView: React.FC = () => {
           <div className="empty-state-card">
             <h3>Indices Unavailable</h3>
             <p>
-              Connect an active in-memory session token in <strong>Dev Token</strong> to view
+              Please sign in to your NIVORA account to view
               live index feeds from <code>/api/v1/market/indices</code>.
             </p>
           </div>

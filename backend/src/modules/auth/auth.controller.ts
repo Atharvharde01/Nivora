@@ -86,7 +86,7 @@ export class AuthController {
         throw new AuthError("ACCOUNT_PROVISIONING_FAILED", "AuthService is not configured.", 500);
       }
 
-      const { email, otp } = req.body ?? {};
+      const { email, otp, displayName, consents } = req.body ?? {};
       if (!email || typeof email !== "string") {
         throw new AuthError("INVALID_EMAIL", "Email address is required.", 400);
       }
@@ -102,6 +102,8 @@ export class AuthController {
         otp,
         ipAddress: clientIp,
         userAgent,
+        displayName: typeof displayName === "string" ? displayName : undefined,
+        consents,
       });
 
       // Issue CSRF token and set HttpOnly refresh token cookie + readable CSRF cookie
@@ -116,6 +118,7 @@ export class AuthController {
       // Return user, session, and 15m access token in JSON (raw refresh token is in cookie)
       res.status(200).json({
         success: true,
+        isNewUser: loginResult.isNewUser,
         user: loginResult.user,
         session: loginResult.session,
         accessToken: loginResult.accessToken,
@@ -210,7 +213,10 @@ export class AuthController {
         throw new AuthError("ACCOUNT_PROVISIONING_FAILED", "AuthService is not configured.", 500);
       }
 
-      // CSRF validation for cookie-authenticated state-changing operation
+      // Origin and CSRF validation for cookie-authenticated state-changing operation
+      if (this.allowedOrigins.length > 0) {
+        validateRequestOrigin(req, this.allowedOrigins);
+      }
       validateCsrfProtection(req);
 
       const rawRefreshToken = extractRefreshTokenFromRequest(
@@ -291,10 +297,17 @@ export class AuthController {
       success: true,
       user: {
         id: req.user._id.toString(),
+        userId: req.user._id.toString(),
         email: req.user.email,
+        emailVerifiedAt: req.user.emailVerifiedAt,
         displayName: req.user.displayName,
         status: req.user.status,
         onboardingCompleted: req.user.onboardingCompleted,
+        termsAcceptedAt: req.user.termsAcceptedAt,
+        termsVersion: req.user.termsVersion,
+        privacyAcceptedAt: req.user.privacyAcceptedAt,
+        privacyVersion: req.user.privacyVersion,
+        simulationDisclosureAcceptedAt: req.user.simulationDisclosureAcceptedAt,
         createdAt: req.user.createdAt,
       },
       session: {

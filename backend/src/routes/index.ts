@@ -17,6 +17,8 @@ import { AccountController } from "../modules/practice-accounts/account.controll
 import { createAccountRouter } from "../modules/practice-accounts/account.routes";
 import { MarketDataController } from "../modules/market-indices/market-data.controller";
 import { createMarketDataRouter } from "../modules/market-indices/market-data.routes";
+import { UserController } from "../modules/users/user.controller";
+import { createUserRouter } from "../modules/users/user.routes";
 
 export interface AppRouterDependencies {
   authDependencies: AuthRouterDependencies;
@@ -28,6 +30,7 @@ export interface AppRouterDependencies {
   portfolioController?: PortfolioController;
   tradeController?: TradeController;
   accountController?: AccountController;
+  userController?: UserController;
 }
 
 export function createAppRouter(dependencies: AppRouterDependencies): Router {
@@ -62,6 +65,7 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
     dependencies.tradeController ?? new TradeController();
   const accountController =
     dependencies.accountController ?? new AccountController();
+  const userController = dependencies.userController ?? new UserController();
 
   apiV1Router.use(
     "/instruments",
@@ -93,6 +97,7 @@ export function createAppRouter(dependencies: AppRouterDependencies): Router {
     "/accounts",
     createAccountRouter(accountController, authMiddleware)
   );
+  apiV1Router.use("/users", createUserRouter(userController, authMiddleware));
 
   router.use("/api/v1", apiV1Router);
 

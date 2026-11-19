@@ -1,6 +1,11 @@
 import { z } from "zod";
 import { Types } from "mongoose";
 import { parseMarketQueryDate } from "../../modules/market-candles/market-candle.utils";
+import {
+  DISPLAY_NAME_MAX_LENGTH,
+  isValidDisplayName,
+  sanitizeDisplayName,
+} from "../../modules/users/user.schema";
 
 export const OBJECT_ID_HEX_REGEX = /^[0-9a-fA-F]{24}$/;
 export const IDEMPOTENCY_KEY_REGEX = /^[a-zA-Z0-9_\-:.]{8,128}$/;
@@ -166,10 +171,35 @@ export const requestOtpBodySchema = z
   })
   .strict();
 
+export const signupConsentsSchema = z
+  .object({
+    acceptTerms: z.boolean(),
+    acceptPrivacy: z.boolean(),
+    acceptSimulationDisclosure: z.boolean(),
+    termsVersion: z.string().trim().min(1).max(32).optional(),
+    privacyVersion: z.string().trim().min(1).max(32).optional(),
+  })
+  .strict();
+
+export const displayNameSchema = z
+  .string("Full name must be a valid text string.")
+  .refine((val) => isValidDisplayName(val), {
+    message: `Full name must be 2 to ${DISPLAY_NAME_MAX_LENGTH} characters, contain letters, and must not include control characters or email addresses.`,
+  })
+  .transform((val) => sanitizeDisplayName(val));
+
 export const verifyOtpBodySchema = z
   .object({
     email: emailSchema,
     otp: otpCodeSchema,
+    displayName: z.string().max(100).optional(),
+    consents: signupConsentsSchema.optional(),
+  })
+  .strict();
+
+export const updateUserProfileBodySchema = z
+  .object({
+    displayName: displayNameSchema,
   })
   .strict();
 

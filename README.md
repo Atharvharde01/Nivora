@@ -89,7 +89,7 @@ cp backend/.env.example backend/.env
 ```
 Populate your environment variables:
 ```env
-PORT=3002
+PORT=5000
 MONGO_URL=mongodb+srv://<username>:<password>@<cluster>.mongodb.net/<database>?retryWrites=true&w=majority
 NODE_ENV=development
 FRONTEND_URL=http://localhost:3000
@@ -100,7 +100,7 @@ DASHBOARD_URL=http://localhost:3001
 Each application runs independently within the monorepo:
 
 ```bash
-# Backend (Port 3002)
+# Backend (Port 5000)
 cd backend
 npm install
 npm run dev

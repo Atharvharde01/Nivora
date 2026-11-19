@@ -1,6 +1,8 @@
 import React from "react";
+import { useNavigate } from "react-router-dom";
 
 const OpenAccount: React.FC = () => {
+  const navigate = useNavigate();
   return (
     <div className="container p-5 mb-5 mt-3">
       <div className="row text-center">
@@ -10,8 +12,10 @@ const OpenAccount: React.FC = () => {
           F&O trades.
         </p>
         <button
+          type="button"
           className="p-2 btn btn-primary fs-5 mt-3 mb-5 "
           style={{ width: "20%", margin: "0 auto" }}
+          onClick={() => navigate("/signup")}
         >
           Sign up Now
         </button>

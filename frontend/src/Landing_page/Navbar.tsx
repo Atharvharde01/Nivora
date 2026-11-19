@@ -10,7 +10,7 @@ const Navbar: React.FC = () => {
       <div className="container p-2">
         <Link to="/" className="navbar-brand mr-5 pr-5">
           <img
-            src="media/images/logo.svg"
+            src="/media/images/logo.svg"
             style={{ width: "24%", marginLeft: "2rem" }}
             alt="Logo"
           />

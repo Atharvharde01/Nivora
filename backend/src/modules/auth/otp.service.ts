@@ -79,6 +79,7 @@ export interface OtpServiceOptions {
 export interface OtpRequestResult {
   success: true;
   message: string;
+  resendCooldownSeconds: number;
 }
 
 export interface OtpVerificationSuccess {
@@ -240,6 +241,7 @@ export class OtpService {
       success: true,
       message:
         "If the email is valid, a verification code has been sent.",
+      resendCooldownSeconds: Math.max(1, Math.ceil(this.resendCooldownMs / 1000)),
     };
   }
 
@@ -256,7 +258,10 @@ export class OtpService {
   public async verifyOtp(
     email: string,
     rawOtp: string,
-    now = new Date()
+    now = new Date(),
+    options?: {
+      beforeConsume?: (normalizedEmail: string) => Promise<void>;
+    }
   ): Promise<OtpVerificationSuccess> {
     if (typeof email !== "string" || !isValidChallengeEmail(email)) {
       throw new AuthError("INVALID_EMAIL", "Invalid email address format.", 400);
@@ -346,6 +351,13 @@ export class OtpService {
         400,
         { remainingAttempts: remaining }
       );
+    }
+
+    // 4.5. Optional pre-consumption guard (e.g., validating new-user name & consents
+    // after OTP cryptographic verification so missing signup details never burn a valid OTP
+    // and invalid OTPs never leak account existence)
+    if (options?.beforeConsume) {
+      await options.beforeConsume(normalizedEmail);
     }
 
     // 5. Atomically consume the challenge (guarantees single-use under concurrency)

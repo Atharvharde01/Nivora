@@ -9,11 +9,18 @@ import Workspace from "./Workspace";
 import { useAuth } from "../context/AuthContext";
 import { usePortfolio } from "../context/PortfolioContext";
 import { formatRupees, paiseToRupees } from "../api/types";
+import {
+  getTimeBasedGreeting,
+  getUserDisplayName,
+} from "../utils/userDisplay";
 import { AccountBalanceWallet, PieChartOutline } from "@mui/icons-material";
 
 export const Summary: React.FC = () => {
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { summary, account } = usePortfolio();
+
+  const greetingPrefix = getTimeBasedGreeting();
+  const userGreetingName = getUserDisplayName(user);
 
   const cashBalanceRupees = summary
     ? paiseToRupees(summary.cashBalancePaise)
@@ -43,6 +50,21 @@ export const Summary: React.FC = () => {
 
   return (
     <div className="summary-page-container">
+      {/* Personalized Welcome Banner */}
+      <div className="dashboard-welcome-bar" data-testid="dashboard-welcome-banner">
+        <div>
+          <h1 className="welcome-heading">
+            {greetingPrefix}, {userGreetingName}!
+          </h1>
+          <p className="welcome-subtext">Welcome back to NIVORA.</p>
+        </div>
+        {isAuthenticated && account && (
+          <span className="welcome-account-pill">
+            Practice Account #{account.accountNumber} • {account.status}
+          </span>
+        )}
+      </div>
+
       {/* Active Selected Instrument & Chart Area */}
       <Workspace />
 
@@ -56,7 +78,7 @@ export const Summary: React.FC = () => {
                 ? account
                   ? `Practice Account #${account.accountNumber} • Status: ${account.status}`
                   : "Authenticated Practice Session"
-                : "Simulation Mode • Configure in-memory Dev Token to view live account records"}
+                : "Simulation Mode • Sign in to view live account records"}
             </p>
           </div>
         </div>

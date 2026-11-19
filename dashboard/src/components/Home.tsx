@@ -1,28 +1,37 @@
 /**
  * NIVORA Trading Platform — Application Shell
- * Wraps top-level navigation, workspace, and modals with AuthProvider and MarketProvider.
+ * Wraps the entire trading workspace inside AuthProvider + ProtectedRoute.
+ * User-specific MarketProvider and PortfolioProvider mount ONLY for authenticated
+ * sessions and unmount immediately upon logout or session expiry.
  */
 
 import React from "react";
 import { AuthProvider } from "../context/AuthContext";
 import { MarketProvider } from "../context/MarketContext";
 import { PortfolioProvider } from "../context/PortfolioContext";
+import ProtectedRoute from "./ProtectedRoute";
 import TopBar from "./TopBar";
 import Dashboard from "./Dashboard";
 import OrderActionWindow from "./OrderActionWindow";
 
-export const Home: React.FC = () => {
+export interface HomeProps {
+  onRedirectToSignup?: (url: string) => void;
+}
+
+export const Home: React.FC<HomeProps> = ({ onRedirectToSignup }) => {
   return (
-    <AuthProvider>
-      <MarketProvider>
-        <PortfolioProvider>
-          <div className="nivora-shell">
-            <TopBar />
-            <Dashboard />
-            <OrderActionWindow />
-          </div>
-        </PortfolioProvider>
-      </MarketProvider>
+    <AuthProvider onRedirectToSignup={onRedirectToSignup}>
+      <ProtectedRoute onRedirectToSignup={onRedirectToSignup}>
+        <MarketProvider>
+          <PortfolioProvider>
+            <div className="nivora-shell">
+              <TopBar />
+              <Dashboard />
+              <OrderActionWindow />
+            </div>
+          </PortfolioProvider>
+        </MarketProvider>
+      </ProtectedRoute>
     </AuthProvider>
   );
 };

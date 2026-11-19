@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 300" fill="none" role="img" aria-label="Email OTP Verification Illustration">
+  <circle cx="205" cy="152" r="108" fill="#F4F7FB" />
+  <circle cx="290" cy="72" r="4" fill="#387ED1" />
+  <circle cx="310" cy="88" r="3" fill="#93C5FD" />
+  <circle cx="272" cy="58" r="3" fill="#BFDBFE" />
+  <circle cx="322" cy="108" r="4" fill="#387ED1" opacity="0.65" />
+  <rect x="108" y="88" width="204" height="132" rx="10" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="2" />
+  <rect x="132" y="138" width="156" height="44" rx="6" stroke="#CBD5E1" stroke-width="2" stroke-dasharray="6 6" />
+  <g filter="url(#shadow)">
+    <rect x="150" y="106" width="162" height="58" rx="8" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.5" />
+    <rect x="166" y="121" width="32" height="24" rx="4" fill="#FFFBEB" stroke="#F59E0B" stroke-width="2" />
+    <path d="M168 123L182 135L196 123" stroke="#F59E0B" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="210" y="123" width="84" height="8" rx="4" fill="#387ED1" />
+    <rect x="210" y="138" width="52" height="7" rx="3.5" fill="#CBD5E1" />
+  </g>
+  <rect x="64" y="64" width="66" height="58" rx="10" fill="#EBF4FF" />
+  <circle cx="97" cy="93" r="18" fill="#FFFFFF" stroke="#387ED1" stroke-width="2.5" />
+  <path d="M89 93L95 99L106 87" stroke="#387ED1" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+  <path d="M114 122L126 134L122 116Z" fill="#EBF4FF" />
+  <rect x="252" y="196" width="82" height="40" rx="8" fill="#F59E0B" />
+  <path d="M266 196L252 178L280 196Z" fill="#F59E0B" />
+  <circle cx="272" cy="216" r="4" fill="#FFFFFF" />
+  <circle cx="286" cy="216" r="4" fill="#FFFFFF" />
+  <circle cx="300" cy="216" r="4" fill="#FFFFFF" />
+  <circle cx="314" cy="216" r="4" fill="#FFFFFF" />
+  <defs>
+    <filter id="shadow" x="142" y="100" width="178" height="74" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="4" stdDeviation="4" flood-color="#0F172A" flood-opacity="0.08" />
+    </filter>
+  </defs>
+</svg>

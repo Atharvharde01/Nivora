@@ -1,10 +1,20 @@
 import React from "react";
 import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
 import { AuthProvider, useAuth } from "../../context/AuthContext";
-import { PortfolioProvider } from "../../context/PortfolioContext";
+import { PortfolioProvider, usePortfolio } from "../../context/PortfolioContext";
 import { OrdersApi, PortfolioApi, AccountsApi } from "../../api/client";
 import { Orders } from "../Orders";
 import { OrderDto } from "../../api/types";
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: any) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
 
 const mockOrders: OrderDto[] = [
   {
@@ -61,11 +71,13 @@ const mockOrders: OrderDto[] = [
 
 const TestAuthHelper: React.FC = () => {
   const { setToken } = useAuth();
+  const { triggerOrdersRefresh } = usePortfolio();
   return (
     <div>
       <button onClick={() => setToken("jwt-token-user-1")}>Login User 1</button>
       <button onClick={() => setToken("jwt-token-user-2")}>Login User 2</button>
       <button onClick={() => setToken(null)}>Logout</button>
+      <button onClick={() => triggerOrdersRefresh()}>Sync Signal</button>
     </div>
   );
 };
@@ -274,5 +286,252 @@ describe("Orders Component — Orders History Suite", () => {
     });
 
     expect(getOrdersSpy).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("Orders Component — Asynchronous Concurrency & Race Protection Suite", () => {
+  beforeEach(() => {
+    jest.clearAllMocks();
+  });
+
+  test("User A -> User B switch while orders fetch is pending executes B without waiting and discards A", async () => {
+    const deferredA = createDeferred<any>();
+    const deferredB = createDeferred<any>();
+
+    let callCount = 0;
+    const getOrdersSpy = jest.spyOn(OrdersApi, "getOrders").mockImplementation(() => {
+      callCount += 1;
+      return callCount === 1 ? deferredA.promise : deferredB.promise;
+    });
+
+    renderOrdersView();
+
+    // Step A: User 1 logs in
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User 1"));
+    });
+
+    expect(getOrdersSpy).toHaveBeenCalledTimes(1);
+
+    // Step B: User 2 logs in before User 1's request completes
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User 2"));
+    });
+
+    // Step C: User 2's request executes without waiting for 1
+    expect(getOrdersSpy).toHaveBeenCalledTimes(2);
+
+    // Step D: User 2's request completes
+    const user2Order: OrderDto = {
+      _id: "ord-user-2-1",
+      userId: "usr-2",
+      practiceAccountId: "acc-user-2",
+      instrumentId: "664000000000000000000040",
+      symbol: "WIPRO",
+      exchange: "NSE",
+      side: "BUY",
+      orderType: "MARKET",
+      quantity: 25,
+      status: "EXECUTED",
+      executedQuantity: 25,
+      executionPricePaise: 45000,
+      totalValuePaise: 1125000,
+      createdAt: "2026-11-18T13:00:00.000Z",
+      updatedAt: "2026-11-18T13:00:01.000Z",
+    };
+
+    await act(async () => {
+      deferredB.resolve({
+        success: true,
+        data: {
+          items: [user2Order],
+          pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+        },
+      });
+    });
+
+    // Verify User 2's order is rendered
+    await waitFor(() => {
+      expect(screen.getByText("WIPRO")).toBeInTheDocument();
+      expect(screen.getByText("25")).toBeInTheDocument();
+    });
+
+    // Step E: User 1's delayed response arrives now
+    await act(async () => {
+      deferredA.resolve({
+        success: true,
+        data: {
+          items: [mockOrders[0]], // INFY
+          pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+        },
+      });
+    });
+
+    // User 1's response must NOT overwrite User 2's data
+    expect(screen.getByText("WIPRO")).toBeInTheDocument();
+    expect(screen.queryByText("INFY")).not.toBeInTheDocument();
+  });
+
+  test("direct User A -> User B switch immediately clears old orders while new fetch is pending", async () => {
+    const deferredB = createDeferred<any>();
+
+    let callCount = 0;
+    jest.spyOn(OrdersApi, "getOrders").mockImplementation(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return Promise.resolve({
+          success: true,
+          data: {
+            items: [mockOrders[0]], // INFY
+            pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+          },
+        });
+      }
+      return deferredB.promise;
+    });
+
+    renderOrdersView();
+
+    // User 1 logs in and sees INFY
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User 1"));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("INFY")).toBeInTheDocument();
+    });
+
+    // User switches directly to User 2 (request 2 pending)
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User 2"));
+    });
+
+    // While User 2's request is in-flight, User 1's INFY must be immediately hidden!
+    expect(screen.queryByText("INFY")).not.toBeInTheDocument();
+    expect(screen.getByText("Loading orders...")).toBeInTheDocument();
+
+    // Resolve User 2's request
+    await act(async () => {
+      deferredB.resolve({
+        success: true,
+        data: {
+          items: [mockOrders[1]], // TCS
+          pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("TCS")).toBeInTheDocument();
+      expect(screen.queryByText("INFY")).not.toBeInTheDocument();
+    });
+  });
+
+  test("out-of-order responses within same session: older superseded request does not overwrite newer result", async () => {
+    const deferred1 = createDeferred<any>();
+    const deferred2 = createDeferred<any>();
+
+    let count = 0;
+    jest.spyOn(OrdersApi, "getOrders").mockImplementation(() => {
+      count += 1;
+      return count === 1 ? deferred1.promise : deferred2.promise;
+    });
+
+    renderOrdersView();
+
+    // Start request 1
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User 1"));
+    });
+
+    // Trigger request 2 via refresh signal
+    await act(async () => {
+      fireEvent.click(screen.getByText("Sync Signal"));
+    });
+
+    // Resolve newer request 2 FIRST
+    await act(async () => {
+      deferred2.resolve({
+        success: true,
+        data: {
+          items: [mockOrders[1]], // TCS
+          pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("TCS")).toBeInTheDocument();
+    });
+
+    // Later, older request 1 resolves
+    await act(async () => {
+      deferred1.resolve({
+        success: true,
+        data: {
+          items: [mockOrders[0]], // INFY
+          pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+        },
+      });
+    });
+
+    // The newer request 2 result (TCS) must remain; INFY must NOT overwrite it
+    expect(screen.getByText("TCS")).toBeInTheDocument();
+    expect(screen.queryByText("INFY")).not.toBeInTheDocument();
+  });
+
+  test("newer request loading-state protection: older request does not clear loading for active newer request", async () => {
+    const deferred1 = createDeferred<any>();
+    const deferred2 = createDeferred<any>();
+
+    let count = 0;
+    jest.spyOn(OrdersApi, "getOrders").mockImplementation(() => {
+      count += 1;
+      return count === 1 ? deferred1.promise : deferred2.promise;
+    });
+
+    renderOrdersView();
+
+    // Start request 1
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User 1"));
+    });
+
+    // Start request 2
+    await act(async () => {
+      fireEvent.click(screen.getByText("Sync Signal"));
+    });
+
+    expect(screen.getByText("Loading orders...")).toBeInTheDocument();
+
+    // Older request 1 resolves
+    await act(async () => {
+      deferred1.resolve({
+        success: true,
+        data: {
+          items: [],
+          pagination: { page: 1, limit: 50, total: 0, totalPages: 0 },
+        },
+      });
+    });
+
+    // Loading indicator must STILL be active for pending request 2!
+    expect(screen.getByText("Loading orders...")).toBeInTheDocument();
+
+    // Request 2 resolves
+    await act(async () => {
+      deferred2.resolve({
+        success: true,
+        data: {
+          items: [mockOrders[0]],
+          pagination: { page: 1, limit: 50, total: 1, totalPages: 1 },
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Loading orders...")).not.toBeInTheDocument();
+      expect(screen.getByText("INFY")).toBeInTheDocument();
+    });
   });
 });

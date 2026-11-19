@@ -19,7 +19,10 @@ export type AuthErrorCode =
   | "CSRF_TOKEN_MISMATCH"
   | "INVALID_REFRESH_TOKEN"
   | "REFRESH_TOKEN_REUSE_DETECTED"
-  | "ACCOUNT_PROVISIONING_FAILED";
+  | "ACCOUNT_PROVISIONING_FAILED"
+  | "CONSENT_REQUIRED"
+  | "DISPLAY_NAME_REQUIRED"
+  | "INVALID_DISPLAY_NAME";
 
 export class AuthError extends Error {
   public readonly code: AuthErrorCode;

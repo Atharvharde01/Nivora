@@ -34,6 +34,16 @@ const mockUntradableEquity: SelectedInstrument = {
   isTradable: false,
 };
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (reason?: any) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
 const TestController: React.FC<{ initialInstrument?: SelectedInstrument }> = ({
   initialInstrument = mockEquity,
 }) => {
@@ -43,6 +53,8 @@ const TestController: React.FC<{ initialInstrument?: SelectedInstrument }> = ({
   return (
     <div>
       <button onClick={() => setToken("jwt-session-token")}>Login</button>
+      <button onClick={() => setToken("jwt-token-user-a")}>Login User A</button>
+      <button onClick={() => setToken("jwt-token-user-b")}>Login User B</button>
       <button onClick={() => setToken(null)}>Logout</button>
       <button onClick={() => openBuyWindow(initialInstrument)}>Open BUY</button>
       <button onClick={() => openSellWindow(initialInstrument)}>Open SELL</button>
@@ -353,7 +365,7 @@ describe("OrderActionWindow Component — Trading Integration Suite", () => {
       fireEvent.click(screen.getByText("Open Index BUY"));
     });
 
-    expect(screen.getByText(/is a market index benchmark and cannot be traded directly/)).toBeInTheDocument();
+    expect(screen.getByText(/Indices cannot be traded directly/)).toBeInTheDocument();
     const submitBtn = screen.getByRole("button", { name: /^BUY/i });
     expect(submitBtn).toBeDisabled();
   });
@@ -564,6 +576,241 @@ describe("OrderActionWindow Component — Trading Integration Suite", () => {
       expect(screen.getByText(/Order Rejected/)).toBeInTheDocument();
       expect(screen.getByText(/\[INSUFFICIENT_FUNDS\]/)).toBeInTheDocument();
       expect(screen.getByText(/Practice account cash balance is insufficient to cover total consideration/)).toBeInTheDocument();
+    });
+  });
+
+  test("stale order submission feedback: User A submits order, switches session before response, delayed response does NOT show feedback to User B", async () => {
+    const deferredA = createDeferred<any>();
+    const placeOrderSpy = jest.spyOn(OrdersApi, "placeOrder").mockReturnValue(deferredA.promise);
+
+    renderOrderWindow();
+
+    // User A logs in and opens BUY window
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User A"));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Open BUY"));
+    });
+
+    const qtyInput = screen.getByLabelText(/Quantity/i);
+    await act(async () => {
+      fireEvent.change(qtyInput, { target: { value: "2" } });
+    });
+
+    // User A submits order
+    const submitBtn = screen.getByRole("button", { name: "BUY (2)" });
+    await act(async () => {
+      fireEvent.click(submitBtn);
+    });
+
+    expect(placeOrderSpy).toHaveBeenCalledTimes(1);
+
+    // Switch to User B before User A's response arrives
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User B"));
+    });
+
+    // Now User A's delayed execution response arrives
+    await act(async () => {
+      deferredA.resolve({
+        success: true,
+        data: {
+          status: "EXECUTED",
+          wasIdempotentReplay: false,
+          order: {
+            _id: "ord-user-a-delayed",
+            instrumentId: "664000000000000000000020",
+            symbol: "INFY",
+            exchange: "NSE",
+            side: "BUY",
+            orderType: "MARKET",
+            quantity: 2,
+            status: "EXECUTED",
+            executedQuantity: 2,
+            executionPricePaise: 185000,
+            totalValuePaise: 370000,
+            createdAt: "2026-11-18T10:00:00.000Z",
+          },
+          trade: null,
+        },
+      });
+    });
+
+    // User A's execution result must NOT be shown in User B's active view
+    expect(screen.queryByText(/Order Executed \(BUY\)/)).not.toBeInTheDocument();
+  });
+
+  test("session switch releases submission lock for new session", async () => {
+    const deferredA = createDeferred<any>();
+    const deferredB = createDeferred<any>();
+
+    let count = 0;
+    const placeOrderSpy = jest.spyOn(OrdersApi, "placeOrder").mockImplementation(() => {
+      count += 1;
+      return count === 1 ? deferredA.promise : deferredB.promise;
+    });
+
+    renderOrderWindow();
+
+    // User A logs in and submits
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User A"));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Open BUY"));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "BUY (1)" }));
+    });
+
+    expect(placeOrderSpy).toHaveBeenCalledTimes(1);
+
+    // Switch to User B
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User B"));
+    });
+
+    // User B should NOT be blocked by User A's pending lock
+    const submitBtnB = screen.getByRole("button", { name: "BUY (1)" });
+    expect(submitBtnB).not.toBeDisabled();
+
+    await act(async () => {
+      fireEvent.click(submitBtnB);
+    });
+
+    // User B's order was submitted successfully
+    expect(placeOrderSpy).toHaveBeenCalledTimes(2);
+
+    // Resolve User B's order
+    await act(async () => {
+      deferredB.resolve({
+        success: true,
+        data: {
+          status: "EXECUTED",
+          wasIdempotentReplay: false,
+          order: {
+            _id: "ord-b",
+            instrumentId: "664000000000000000000020",
+            symbol: "INFY",
+            exchange: "NSE",
+            side: "BUY",
+            orderType: "MARKET",
+            quantity: 1,
+            status: "EXECUTED",
+            executedQuantity: 1,
+            executionPricePaise: 185000,
+            totalValuePaise: 185000,
+            createdAt: "2026-11-18T10:00:00.000Z",
+          },
+          trade: null,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Order Executed (BUY)")).toBeInTheDocument();
+    });
+  });
+
+  test("User A's finally block does not prematurely release User B's submission lock", async () => {
+    const deferredA = createDeferred<any>();
+    const deferredB = createDeferred<any>();
+
+    let count = 0;
+    jest.spyOn(OrdersApi, "placeOrder").mockImplementation(() => {
+      count += 1;
+      return count === 1 ? deferredA.promise : deferredB.promise;
+    });
+
+    renderOrderWindow();
+
+    // User A submits order (request 1 in-flight)
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User A"));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByText("Open BUY"));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "BUY (1)" }));
+    });
+
+    // Switch to User B and submit order (request 2 in-flight)
+    await act(async () => {
+      fireEvent.click(screen.getByText("Login User B"));
+    });
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "BUY (1)" }));
+    });
+
+    // User B is currently submitting
+    expect(screen.getByText("Submitting...")).toBeInTheDocument();
+
+    // User A's older request 1 resolves and enters finally block
+    await act(async () => {
+      deferredA.resolve({
+        success: true,
+        data: {
+          status: "EXECUTED",
+          wasIdempotentReplay: false,
+          order: {
+            _id: "ord-a",
+            instrumentId: "664000000000000000000020",
+            symbol: "INFY",
+            exchange: "NSE",
+            side: "BUY",
+            orderType: "MARKET",
+            quantity: 1,
+            status: "EXECUTED",
+            executedQuantity: 1,
+            executionPricePaise: 185000,
+            totalValuePaise: 185000,
+            createdAt: "2026-11-18T10:00:00.000Z",
+          },
+          trade: null,
+        },
+      });
+    });
+
+    // User B's submission lock must STILL be active ("Submitting...")
+    expect(screen.getByText("Submitting...")).toBeInTheDocument();
+
+    // Now resolve User B's request 2
+    await act(async () => {
+      deferredB.resolve({
+        success: true,
+        data: {
+          status: "EXECUTED",
+          wasIdempotentReplay: false,
+          order: {
+            _id: "ord-b",
+            instrumentId: "664000000000000000000020",
+            symbol: "INFY",
+            exchange: "NSE",
+            side: "BUY",
+            orderType: "MARKET",
+            quantity: 1,
+            status: "EXECUTED",
+            executedQuantity: 1,
+            executionPricePaise: 185000,
+            totalValuePaise: 185000,
+            createdAt: "2026-11-18T10:00:00.000Z",
+          },
+          trade: null,
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByText("Submitting...")).not.toBeInTheDocument();
+      expect(screen.getByText("Order Executed (BUY)")).toBeInTheDocument();
     });
   });
 });

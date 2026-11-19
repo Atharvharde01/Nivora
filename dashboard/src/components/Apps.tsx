@@ -1,40 +1,56 @@
 /**
  * NIVORA Trading Platform — Apps & Integrations View
- * Developer tools, API reference, and simulated trading services.
+ * Session security overview, API gateway status, and simulated trading services.
  */
 
 import React from "react";
-import { Terminal, Code, VpnKey, Speed } from "@mui/icons-material";
+import { Terminal, Code, VerifiedUser, Speed } from "@mui/icons-material";
 import { useAuth } from "../context/AuthContext";
 import { baseURL } from "../api/client";
 
 export const Apps: React.FC = () => {
-  const { openTokenModal, isAuthenticated } = useAuth();
+  const { isAuthenticated, user, logout, isLoggingOut } = useAuth();
 
   return (
     <div className="view-container">
       <div className="view-header">
-        <h2 className="view-title">Apps & Developer Tools</h2>
-        <p className="view-subtitle">Developer integrations, API connections, and system telemetry</p>
+        <h2 className="view-title">Apps &amp; Platform Services</h2>
+        <p className="view-subtitle">
+          Session security, API gateway connections, and market simulation telemetry
+        </p>
       </div>
 
       <div className="apps-grid">
-        {/* DEV SESSION CARD */}
+        {/* SESSION SECURITY CARD */}
         <div className="app-card">
           <div className="app-card-header">
-            <VpnKey sx={{ fontSize: 28, color: "#2563EB" }} />
+            <VerifiedUser sx={{ fontSize: 28, color: "#2563EB" }} />
             <div>
-              <h3 className="app-card-title">In-Memory Dev Token</h3>
+              <h3 className="app-card-title">Email OTP Session</h3>
               <span className="app-badge">Authentication</span>
             </div>
           </div>
           <p className="app-card-desc">
-            Configure an ephemeral JWT access token in React memory to access protected API endpoints.
+            {isAuthenticated && user?.email
+              ? `Signed in as ${user.email}. Short-lived JWT access tokens remain in React memory and refresh via HttpOnly cookies.`
+              : "Protected by passwordless email OTP authentication, rotating HttpOnly refresh cookies, and CSRF validation."}
           </p>
           <div className="app-card-footer">
-            <button type="button" className="btn btn-blue" onClick={openTokenModal}>
-              {isAuthenticated ? "Manage Token" : "Enter Token"}
-            </button>
+            <span
+              className={`api-status-pill ${isAuthenticated ? "online" : ""}`}
+            >
+              {isAuthenticated ? "Session Active" : "Signed Out"}
+            </span>
+            {isAuthenticated && (
+              <button
+                type="button"
+                className="btn btn-blue"
+                onClick={() => void logout()}
+                disabled={isLoggingOut}
+              >
+                {isLoggingOut ? "Signing out..." : "Sign out"}
+              </button>
+            )}
           </div>
         </div>
 
@@ -48,7 +64,7 @@ export const Apps: React.FC = () => {
             </div>
           </div>
           <p className="app-card-desc">
-            Base endpoint: <code>{baseURL}</code>. Provides market candles, quotes, indices, and orders.
+            Base endpoint: <code>{baseURL}</code>. Provides market candles, quotes, indices, orders, and portfolio APIs.
           </p>
           <div className="app-card-footer">
             <span className="api-status-pill online">Connected</span>
@@ -72,20 +88,20 @@ export const Apps: React.FC = () => {
           </div>
         </div>
 
-        {/* ROADMAP CARD */}
+        {/* PLATFORM STATUS CARD */}
         <div className="app-card">
           <div className="app-card-header">
             <Code sx={{ fontSize: 28, color: "#8B5CF6" }} />
             <div>
-              <h3 className="app-card-title">Milestone 5 Next Steps</h3>
-              <span className="app-badge">Roadmap</span>
+              <h3 className="app-card-title">Simulated Trading Engine</h3>
+              <span className="app-badge">Phase 6.1</span>
             </div>
           </div>
           <p className="app-card-desc">
-            Task 5.3: NIFTY 50 & SENSEX Market Overview. Task 5.4: Lightweight Candlestick Charts.
+            Passwordless email OTP authentication, interactive candlestick charts, Marketwatch, and atomic virtual portfolio ledger.
           </p>
           <div className="app-card-footer">
-            <span className="api-status-pill">Milestone 5.2 Ready</span>
+            <span className="api-status-pill online">Integrated</span>
           </div>
         </div>
       </div>

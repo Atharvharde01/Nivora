@@ -1,7 +1,7 @@
 /**
  * NIVORA Trading Platform — Orders View
  * Displays user order history retrieved from backend /api/v1/orders.
- * Tracks session generation to prevent cross-session leakage,
+ * Uses request-generation and authentication session tracking to eliminate stale fetch races,
  * displays statuses accurately (RECEIVED, EXECUTED, REJECTED),
  * and surfaces server rejection reasons.
  */
@@ -17,10 +17,6 @@ export const Orders: React.FC = () => {
   const { isAuthenticated, token } = useAuth();
   const { ordersRefreshKey } = usePortfolio();
 
-  const [orders, setOrders] = useState<OrderDto[]>([]);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string | null>(null);
-
   // Synchronous auth-session generation tracking
   const authSessionGenRef = useRef<number>(0);
   const prevTokenRef = useRef<string | null>(token);
@@ -31,7 +27,26 @@ export const Orders: React.FC = () => {
   }
 
   const isMountedRef = useRef<boolean>(true);
-  const isFetchingRef = useRef<boolean>(false);
+
+  // Monotonically increasing request ID (replaces global boolean lock)
+  const ordersRequestIdRef = useRef<number>(0);
+
+  // Session-scoped Orders State
+  const [ordersState, setOrdersState] = useState<{
+    items: OrderDto[];
+    sessionGen: number;
+  }>({ items: [], sessionGen: 0 });
+
+  const [loadingState, setLoadingState] = useState<{
+    loading: boolean;
+    sessionGen: number;
+    requestId: number;
+  }>({ loading: false, sessionGen: 0, requestId: 0 });
+
+  const [errorState, setErrorState] = useState<{
+    error: string | null;
+    sessionGen: number;
+  }>({ error: null, sessionGen: 0 });
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -40,33 +55,60 @@ export const Orders: React.FC = () => {
     };
   }, []);
 
+  // Synchronously derived states: immediately null/empty when session does not match
+  const activeSessionGen = authSessionGenRef.current;
+  const isCurrentSessionActive = isAuthenticated && Boolean(token);
+
+  const orders =
+    isCurrentSessionActive && ordersState.sessionGen === activeSessionGen
+      ? ordersState.items
+      : [];
+
+  const loading =
+    isCurrentSessionActive &&
+    loadingState.sessionGen === activeSessionGen &&
+    loadingState.requestId === ordersRequestIdRef.current
+      ? loadingState.loading
+      : false;
+
+  const error =
+    isCurrentSessionActive && errorState.sessionGen === activeSessionGen
+      ? errorState.error
+      : null;
+
   const fetchOrders = useCallback(async () => {
     const sessionGen = authSessionGenRef.current;
 
     if (!isAuthenticated || !token) {
-      setOrders([]);
-      setError(null);
-      setLoading(false);
+      setOrdersState({ items: [], sessionGen });
+      setErrorState({ error: null, sessionGen });
+      setLoadingState({ loading: false, sessionGen, requestId: 0 });
       return;
     }
 
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
+    const requestId = ++ordersRequestIdRef.current;
 
     if (isMountedRef.current) {
-      setLoading(true);
-      setError(null);
+      setLoadingState({ loading: true, sessionGen, requestId });
+      setErrorState({ error: null, sessionGen });
     }
 
     try {
       const res = await OrdersApi.getOrders({ limit: 50 });
-      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+
+      // Guard: Discard responses whose session generation is no longer active,
+      // or if superseded by a newer request in the same session
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        ordersRequestIdRef.current !== requestId
+      ) {
         return;
       }
 
       if (res.success && res.data?.items) {
-        setOrders(res.data.items);
-        setError(null);
+        setOrdersState({ items: res.data.items, sessionGen });
+        setErrorState({ error: null, sessionGen });
       } else {
         const errorMsg =
           typeof res.error === "object" && res.error !== null && "message" in res.error
@@ -74,21 +116,32 @@ export const Orders: React.FC = () => {
             : typeof res.error === "string"
             ? res.error
             : "Failed to load orders.";
-        setError(errorMsg);
+        setErrorState({ error: errorMsg, sessionGen });
       }
     } catch (err: unknown) {
-      if (!isMountedRef.current || authSessionGenRef.current !== sessionGen) {
+      if (
+        !isMountedRef.current ||
+        authSessionGenRef.current !== sessionGen ||
+        ordersRequestIdRef.current !== requestId
+      ) {
         return;
       }
-      setError(err instanceof Error ? err.message : "Failed to load orders.");
+      setErrorState({
+        error: err instanceof Error ? err.message : "Failed to load orders.",
+        sessionGen,
+      });
     } finally {
-      isFetchingRef.current = false;
-      if (isMountedRef.current && authSessionGenRef.current === sessionGen) {
-        setLoading(false);
+      if (
+        isMountedRef.current &&
+        authSessionGenRef.current === sessionGen &&
+        ordersRequestIdRef.current === requestId
+      ) {
+        setLoadingState({ loading: false, sessionGen, requestId });
       }
     }
   }, [isAuthenticated, token]);
 
+  // Refetch when authentication changes, or when signal is triggered
   useEffect(() => {
     fetchOrders();
   }, [fetchOrders, ordersRefreshKey]);
@@ -132,7 +185,7 @@ export const Orders: React.FC = () => {
           <p>
             {isAuthenticated
               ? "You haven't placed any orders yet. Select an equity from the Marketwatch and click BUY to execute your first simulated trade."
-              : "Session token required to view order history. Use Dev Token in the top menu to authenticate."}
+              : "Session token required to view order history. Please sign in to continue."}
           </p>
         </div>
       ) : (
@@ -157,13 +210,16 @@ export const Orders: React.FC = () => {
                   const isBuy = order.side === "BUY";
                   const isExecuted = order.status === "EXECUTED";
                   const isRejected = order.status === "REJECTED";
-                  const timeStr = new Date(order.createdAt).toLocaleString("en-IN", {
-                    month: "short",
-                    day: "numeric",
-                    hour: "2-digit",
-                    minute: "2-digit",
-                    second: "2-digit",
-                  });
+
+                  const timeStr = order.createdAt
+                    ? new Date(order.createdAt).toLocaleDateString("en-IN", {
+                        day: "2-digit",
+                        month: "short",
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })
+                    : "—";
 
                   return (
                     <tr key={order._id}>

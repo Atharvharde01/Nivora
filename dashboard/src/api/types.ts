@@ -443,3 +443,50 @@ export interface PracticeAccountSummaryDto {
   createdAt: string;
   updatedAt: string;
 }
+
+// ==================== AUTHENTICATION ====================
+
+export interface AuthUserDto {
+  id: string;
+  userId?: string;
+  email: string;
+  emailVerifiedAt?: string;
+  displayName?: string;
+  status: string;
+  onboardingCompleted?: boolean;
+  createdAt?: string;
+}
+
+export interface UpdateProfilePayload {
+  displayName: string;
+}
+
+export interface UpdateProfileResult {
+  user: AuthUserDto;
+}
+
+export interface AuthSessionDto {
+  id: string;
+  status: string;
+  lastActiveAt?: string;
+  idleExpiresAt: string;
+  absoluteExpiresAt: string;
+}
+
+export interface AuthRefreshResponse {
+  success: boolean;
+  accessToken: string;
+  user: AuthUserDto;
+  session: AuthSessionDto;
+}
+
+export interface AuthMeResponse {
+  success: boolean;
+  user: AuthUserDto;
+  session: AuthSessionDto;
+}
+
+export interface AuthLogoutResponse {
+  success: boolean;
+  message: string;
+}

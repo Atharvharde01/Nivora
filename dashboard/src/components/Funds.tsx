@@ -107,7 +107,7 @@ export const Funds: React.FC = () => {
           <AccountBalanceWallet sx={{ fontSize: 48, color: "#94a3b8" }} />
           <h3>Authentication Required</h3>
           <p>
-            Please configure an in-memory session token using <strong>Dev Token</strong> in the top navigation to access your practice account funds and portfolio margin metrics.
+            Please sign in to your NIVORA account to access your practice account funds and portfolio margin metrics.
           </p>
         </div>
       ) : (

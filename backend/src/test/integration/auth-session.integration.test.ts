@@ -53,6 +53,14 @@ describe("Task 23 — JWT Access Tokens & Session Authentication (Real Replica-S
     });
   });
 
+  const DEFAULT_SIGNUP_CONSENTS = {
+    acceptTerms: true,
+    acceptPrivacy: true,
+    acceptSimulationDisclosure: true,
+    termsVersion: "1.0",
+    privacyVersion: "1.0",
+  };
+
   describe("1. First-Time User Provisioning (User + Account + Ledger + Session)", () => {
     it("atomically provisions new User, PracticeAccount, INITIAL_FUNDING ledger, and Session", async () => {
       const email = "newtrader@nivora.test";
@@ -67,6 +75,8 @@ describe("Task 23 — JWT Access Tokens & Session Authentication (Real Replica-S
       const loginResult = await authService.verifyOtpAndLogin({
         email,
         otp: rawOtp,
+        displayName: "New Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress,
         userAgent,
       });
@@ -135,6 +145,8 @@ describe("Task 23 — JWT Access Tokens & Session Authentication (Real Replica-S
       const login1 = await authService.verifyOtpAndLogin({
         email,
         otp: otp1,
+        displayName: "Returning Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "192.168.1.1",
         userAgent: "DeviceA/1.0",
       });
@@ -223,6 +235,8 @@ describe("Task 23 — JWT Access Tokens & Session Authentication (Real Replica-S
       const loginResult = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Middleware Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "Jest/TestRunner",
       });
@@ -256,6 +270,8 @@ describe("Task 23 — JWT Access Tokens & Session Authentication (Real Replica-S
       const loginResult = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Revoked Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "TestAgent",
       });
@@ -311,6 +327,8 @@ describe("Task 23 — JWT Access Tokens & Session Authentication (Real Replica-S
       const loginResult = await authService.verifyOtpAndLogin({
         email,
         otp,
+        displayName: "Idle Trader",
+        consents: DEFAULT_SIGNUP_CONSENTS,
         ipAddress: "127.0.0.1",
         userAgent: "TestAgent",
       });
@@ -358,6 +376,126 @@ describe("Task 23 — JWT Access Tokens & Session Authentication (Real Replica-S
       assert.ok(doc);
       assert.equal(doc.status, "EXPIRED");
       assert.equal(doc.revokedReason, "IDLE_TIMEOUT");
+    });
+  });
+
+  describe("5. Phase 6.1 Revision — Unified New vs Existing Detection, DisplayName & Consent Persistence", () => {
+    it("enforces displayName and consents for new users without consuming OTP, preserves stored name on returning login, and prevents duplicate accounts", async () => {
+      const email = "consent.signup@nivora.test";
+      const reqRes = await otpService.requestOtp(email, "127.0.0.1");
+      assert.equal(reqRes.resendCooldownSeconds, 60);
+
+      const rawOtp = mockEmailService.sentEmails[0].otp;
+
+      // 1. Missing displayName for new user fails with DISPLAY_NAME_REQUIRED without consuming OTP
+      await assert.rejects(
+        async () => {
+          await authService.verifyOtpAndLogin({
+            email,
+            otp: rawOtp,
+            ipAddress: "127.0.0.1",
+            userAgent: "BrowserTest/1.0",
+            consents: DEFAULT_SIGNUP_CONSENTS,
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof AuthError);
+          assert.equal(err.code, "DISPLAY_NAME_REQUIRED");
+          assert.equal(err.statusCode, 400);
+          return true;
+        }
+      );
+
+      // 2. Missing consents for new user fails with CONSENT_REQUIRED without consuming OTP
+      await assert.rejects(
+        async () => {
+          await authService.verifyOtpAndLogin({
+            email,
+            otp: rawOtp,
+            displayName: "Atharv Harde",
+            ipAddress: "127.0.0.1",
+            userAgent: "BrowserTest/1.0",
+          });
+        },
+        (err: unknown) => {
+          assert.ok(err instanceof AuthError);
+          assert.equal(err.code, "CONSENT_REQUIRED");
+          assert.equal(err.statusCode, 400);
+          return true;
+        }
+      );
+
+      // OTP challenge must still be PENDING and no user created
+      const pendingChallenge = await OtpChallengeModel.findOne({ email }).lean();
+      assert.equal(pendingChallenge?.status, "PENDING");
+      const missingUser = await UserModel.findOne({ email }).lean();
+      assert.equal(missingUser, null);
+
+      // 3. Same OTP succeeds once valid displayName and consents are provided
+      const signupRes = await authService.verifyOtpAndLogin({
+        email,
+        otp: rawOtp,
+        displayName: "  Atharv   Harde  ",
+        ipAddress: "127.0.0.1",
+        userAgent: "BrowserTest/1.0",
+        consents: DEFAULT_SIGNUP_CONSENTS,
+      });
+
+      assert.equal(signupRes.isNewUser, true);
+      assert.equal(signupRes.user.displayName, "Atharv Harde");
+      assert.equal(signupRes.user.userId, signupRes.user.id);
+      assert.ok(signupRes.user.emailVerifiedAt);
+      assert.ok(signupRes.user.termsAcceptedAt);
+      assert.equal(signupRes.user.termsVersion, "1.0");
+      assert.ok(signupRes.user.privacyAcceptedAt);
+      assert.equal(signupRes.user.privacyVersion, "1.0");
+      assert.ok(signupRes.user.simulationDisclosureAcceptedAt);
+
+      const accounts = await PracticeAccountModel.find({
+        userId: signupRes.user.id,
+      }).lean();
+      assert.equal(accounts.length, 1);
+
+      // 4. Returning user authenticates with NO name and NO consents
+      const t2 = new Date(Date.now() + 65_000);
+      await otpService.requestOtp(email, "127.0.0.1", t2);
+      const otp2 = mockEmailService.sentEmails[1].otp;
+      const loginNoName = await authService.verifyOtpAndLogin({
+        email,
+        otp: otp2,
+        ipAddress: "127.0.0.1",
+        userAgent: "BrowserTest/1.0",
+        now: t2,
+      });
+
+      assert.equal(loginNoName.isNewUser, false);
+      assert.equal(loginNoName.user.id, signupRes.user.id);
+      assert.equal(loginNoName.user.displayName, "Atharv Harde");
+
+      // 5. Returning user submitting a DIFFERENT name must have it ignored; stored name is preserved
+      const t3 = new Date(Date.now() + 130_000);
+      await otpService.requestOtp(email, "127.0.0.1", t3);
+      const otp3 = mockEmailService.sentEmails[2].otp;
+      const loginDifferentName = await authService.verifyOtpAndLogin({
+        email,
+        otp: otp3,
+        displayName: "Attempted Overwrite Name",
+        consents: DEFAULT_SIGNUP_CONSENTS,
+        ipAddress: "127.0.0.1",
+        userAgent: "BrowserTest/1.0",
+        now: t3,
+      });
+
+      assert.equal(loginDifferentName.isNewUser, false);
+      assert.equal(loginDifferentName.user.displayName, "Atharv Harde");
+
+      const persistedUser = await UserModel.findById(signupRes.user.id).lean();
+      assert.equal(persistedUser?.displayName, "Atharv Harde");
+
+      const accountsAfter = await PracticeAccountModel.find({
+        userId: signupRes.user.id,
+      }).lean();
+      assert.equal(accountsAfter.length, 1);
     });
   });
 });

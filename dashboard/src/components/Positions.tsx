@@ -73,7 +73,7 @@ export const Positions: React.FC = () => {
           <p>
             {isAuthenticated
               ? "You do not have any open trading positions in this practice account. Executed BUY orders will appear here as active positions."
-              : "Session token required to view open positions. Use Dev Token in the top menu to authenticate."}
+              : "Session token required to view open positions. Please sign in to continue."}
           </p>
         </div>
       ) : (
